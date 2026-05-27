@@ -28,6 +28,38 @@ just tells clients which `\\server\share` UNCs to connect.
 Phase 0 — scaffolding. See `docs/architecture.md` for the public summary,
 or the project planning vault for the live design.
 
+## Repo layout
+
+```
+src/
+  OpenPrintDeploy.Shared          # DTOs / contracts shared by server + client
+  OpenPrintDeploy.Server          # ASP.NET Core 8 — REST API + Blazor admin UI
+  OpenPrintDeploy.Client.Service  # .NET 8 Worker — runs as SYSTEM on the endpoint
+  OpenPrintDeploy.Client.Tray     # WPF tray app — user session, applies printers
+docs/
+OpenPrintDeploy.sln
+```
+
+## Build
+
+Requires the .NET 8 SDK (pinned via `global.json`).
+
+```sh
+dotnet restore
+dotnet build
+```
+
+The tray app (`OpenPrintDeploy.Client.Tray`) targets `net8.0-windows` and
+must be built on Windows. The server and client service are cross-platform
+at build time and can be built on Linux / macOS for dev.
+
+To run the server locally:
+
+```sh
+dotnet run --project src/OpenPrintDeploy.Server
+# → http://localhost:5080/health
+```
+
 ## License
 
 MIT (planned — to be added).

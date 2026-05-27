@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <RootNamespace>OpenPrintDeploy.Client.Tray</RootNamespace>
+    <AssemblyName>OpenPrintDeploy.Client.Tray</AssemblyName>
+    <UseWPF>true</UseWPF>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\OpenPrintDeploy.Shared\OpenPrintDeploy.Shared.csproj" />
+  </ItemGroup>
+
+</Project>
