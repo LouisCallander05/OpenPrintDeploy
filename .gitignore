@@ -1,0 +1,47 @@
+# .NET
+bin/
+obj/
+out/
+publish/
+*.user
+*.suo
+*.userprefs
+.vs/
+.vscode/
+
+# Build artifacts
+*.dll
+*.pdb
+*.exe
+!**/wwwroot/**/*.exe
+*.msi
+*.wixpdb
+*.wixobj
+
+# Test results
+TestResults/
+*.trx
+*.coverage
+*.coveragexml
+
+# Logs
+*.log
+logs/
+
+# Local config / secrets
+appsettings.Development.json
+appsettings.Local.json
+*.pfx
+*.snk
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# JetBrains
+.idea/
+
+# EF Core
+*.db
+*.db-shm
+*.db-wal
