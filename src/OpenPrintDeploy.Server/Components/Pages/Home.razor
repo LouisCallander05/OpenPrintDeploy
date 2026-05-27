@@ -1,0 +1,43 @@
+@page "/"
+@attribute [Authorize(Policy = AuthPolicies.Admin)]
+@using OpenPrintDeploy.Server.Admin
+@inject PrinterService Printers
+@inject ZoneService Zones
+
+<PageTitle>OpenPrintDeploy Admin</PageTitle>
+
+<h1>Dashboard</h1>
+
+<p class="text-muted">Centralised printer deployment, driven by zones.</p>
+
+<div class="row g-3 mt-1" style="max-width: 640px;">
+    <div class="col-sm-6">
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">@_printerCount</h5>
+                <p class="card-text text-muted mb-2">Printers configured</p>
+                <a class="btn btn-sm btn-outline-primary" href="printers">Manage printers</a>
+            </div>
+        </div>
+    </div>
+    <div class="col-sm-6">
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">@_zoneCount</h5>
+                <p class="card-text text-muted mb-2">Zones defined</p>
+                <a class="btn btn-sm btn-outline-primary" href="zones">Manage zones</a>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private int _printerCount;
+    private int _zoneCount;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _printerCount = (await Printers.GetAllAsync()).Count;
+        _zoneCount = (await Zones.GetAllAsync()).Count;
+    }
+}

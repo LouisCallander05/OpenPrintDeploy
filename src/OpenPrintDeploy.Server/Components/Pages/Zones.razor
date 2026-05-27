@@ -1,0 +1,321 @@
+@page "/zones"
+@rendermode InteractiveServer
+@attribute [Authorize(Policy = AuthPolicies.Admin)]
+@using OpenPrintDeploy.Server.Admin
+@using OpenPrintDeploy.Server.Data.Entities
+@inject ZoneService ZoneService
+@inject PrinterService PrinterService
+
+<PageTitle>Zones · OpenPrintDeploy</PageTitle>
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h1 class="mb-0">Zones</h1>
+    @if (!_showForm)
+    {
+        <button class="btn btn-primary" @onclick="StartCreate">Add zone</button>
+    }
+</div>
+
+@if (_error is not null)
+{
+    <div class="alert alert-danger" role="alert">@_error</div>
+}
+
+@if (_showForm)
+{
+    <div class="card mb-4">
+        <div class="card-body">
+            <h5 class="card-title">@(_editingId is null ? "New zone" : "Edit zone")</h5>
+            <EditForm Model="_model" OnValidSubmit="SaveAsync">
+                <DataAnnotationsValidator />
+
+                <div class="row">
+                    <div class="col-sm-8 mb-3">
+                        <label class="form-label">Name</label>
+                        <InputText class="form-control" @bind-Value="_model.Name" placeholder="HR" />
+                        <ValidationMessage For="() => _model.Name" class="text-danger small" />
+                    </div>
+                    <div class="col-sm-4 mb-3">
+                        <label class="form-label">Priority</label>
+                        <InputNumber class="form-control" @bind-Value="_model.Priority" />
+                        <div class="form-text">Higher wins when resolving the default printer.</div>
+                        <ValidationMessage For="() => _model.Priority" class="text-danger small" />
+                    </div>
+                </div>
+
+                <fieldset class="mb-3">
+                    <legend class="h6">Match rules</legend>
+                    <p class="form-text mt-0">
+                        A zone applies if <strong>any</strong> rule matches. Within a rule, every
+                        field you set must match (blank fields are ignored). Note: <strong>Machine
+                        OU</strong> rules only apply to on-prem domain- or hybrid-joined machines —
+                        they never match Entra-joined endpoints (which have no on-prem computer
+                        object), so prefer group or subnet rules for those.
+                    </p>
+                    @for (var i = 0; i < _model.Rules.Count; i++)
+                    {
+                        var rule = _model.Rules[i];
+                        var index = i;
+                        <div class="row g-2 align-items-end mb-2">
+                            <div class="col-md-4">
+                                <label class="form-label small mb-0">Group SID</label>
+                                <InputText class="form-control form-control-sm" @bind-Value="rule.GroupSid" placeholder="S-1-5-21-…" />
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label small mb-0">Subnet (CIDR)</label>
+                                <InputText class="form-control form-control-sm" @bind-Value="rule.SubnetCidr" placeholder="10.10.10.0/24" />
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label small mb-0">Machine OU</label>
+                                <InputText class="form-control form-control-sm" @bind-Value="rule.OuDn" placeholder="OU=Sales,DC=corp,DC=local" />
+                            </div>
+                            <div class="col-md-1">
+                                <button type="button" class="btn btn-sm btn-outline-danger w-100" title="Remove rule"
+                                        @onclick="() => _model.Rules.RemoveAt(index)">✕</button>
+                            </div>
+                        </div>
+                    }
+                    <button type="button" class="btn btn-sm btn-outline-secondary" @onclick="() => _model.Rules.Add(new RuleInput())">
+                        Add rule
+                    </button>
+                </fieldset>
+
+                <fieldset class="mb-3">
+                    <legend class="h6">Printers in this zone</legend>
+                    @if (_allPrinters.Count == 0)
+                    {
+                        <p class="text-muted">No printers configured yet. Add printers first.</p>
+                    }
+                    else
+                    {
+                        @foreach (var printer in _allPrinters)
+                        {
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="@($"printer-{printer.Id}")"
+                                       checked="@_model.PrinterIds.Contains(printer.Id)"
+                                       @onchange="e => TogglePrinter(printer.Id, e)" />
+                                <label class="form-check-label" for="@($"printer-{printer.Id}")">
+                                    @printer.DisplayName <code class="text-muted">@printer.UncPath</code>
+                                </label>
+                            </div>
+                        }
+                    }
+                </fieldset>
+
+                <div class="mb-3" style="max-width: 24rem;">
+                    <label class="form-label">Default printer</label>
+                    <InputSelect class="form-select" @bind-Value="_model.DefaultPrinterId">
+                        <option value="">(no default)</option>
+                        @foreach (var printer in SelectedPrinters)
+                        {
+                            <option value="@printer.Id">@printer.DisplayName</option>
+                        }
+                    </InputSelect>
+                    <div class="form-text">Only printers assigned to this zone can be the default.</div>
+                </div>
+
+                <button type="submit" class="btn btn-primary" disabled="@_saving">Save</button>
+                <button type="button" class="btn btn-link" @onclick="CancelForm">Cancel</button>
+            </EditForm>
+        </div>
+    </div>
+}
+
+@if (_zones is null)
+{
+    <p class="text-muted">Loading…</p>
+}
+else if (_zones.Count == 0)
+{
+    <p class="text-muted">No zones yet. Add one to start deploying printers.</p>
+}
+else
+{
+    <table class="table table-hover align-middle">
+        <thead>
+            <tr>
+                <th>Name</th>
+                <th>Priority</th>
+                <th>Rules</th>
+                <th>Printers</th>
+                <th>Default</th>
+                <th class="text-end">Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var zone in _zones)
+            {
+                <tr>
+                    <td>@zone.Name</td>
+                    <td>@zone.Priority</td>
+                    <td>@DescribeRules(zone)</td>
+                    <td>@zone.Printers.Count</td>
+                    <td>@(DefaultName(zone) ?? "—")</td>
+                    <td class="text-end">
+                        @if (_deletingId == zone.Id)
+                        {
+                            <span class="me-2 small">Delete?</span>
+                            <button class="btn btn-sm btn-danger" @onclick="() => ConfirmDeleteAsync(zone.Id)">Yes</button>
+                            <button class="btn btn-sm btn-outline-secondary" @onclick="() => _deletingId = null">No</button>
+                        }
+                        else
+                        {
+                            <button class="btn btn-sm btn-outline-primary" @onclick="() => StartEditAsync(zone.Id)">Edit</button>
+                            <button class="btn btn-sm btn-outline-danger" @onclick="() => _deletingId = zone.Id">Delete</button>
+                        }
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+@code {
+    private IReadOnlyList<ZoneEntity>? _zones;
+    private IReadOnlyList<PrinterEntity> _allPrinters = [];
+    private ZoneInput _model = new();
+    private Guid? _editingId;
+    private Guid? _deletingId;
+    private bool _showForm;
+    private bool _saving;
+    private string? _error;
+
+    private IEnumerable<PrinterEntity> SelectedPrinters =>
+        _allPrinters.Where(p => _model.PrinterIds.Contains(p.Id));
+
+    protected override async Task OnInitializedAsync() => await ReloadAsync();
+
+    private async Task ReloadAsync()
+    {
+        _zones = await ZoneService.GetAllAsync();
+        _allPrinters = await PrinterService.GetAllAsync();
+    }
+
+    private void StartCreate()
+    {
+        _error = null;
+        _editingId = null;
+        _model = new ZoneInput { Rules = { new RuleInput() } };
+        _showForm = true;
+    }
+
+    private async Task StartEditAsync(Guid id)
+    {
+        _error = null;
+        var zone = await ZoneService.GetAsync(id);
+        if (zone is null)
+        {
+            _error = "That zone no longer exists.";
+            await ReloadAsync();
+            return;
+        }
+
+        _editingId = zone.Id;
+        _model = new ZoneInput
+        {
+            Name = zone.Name,
+            Priority = zone.Priority,
+            DefaultPrinterId = zone.DefaultPrinterId,
+            PrinterIds = zone.Printers.Select(p => p.Id).ToList(),
+            Rules = zone.Rules
+                .Select(r => new RuleInput { GroupSid = r.GroupSid, SubnetCidr = r.SubnetCidr, OuDn = r.OuDn })
+                .ToList(),
+        };
+        if (_model.Rules.Count == 0)
+        {
+            _model.Rules.Add(new RuleInput());
+        }
+        _showForm = true;
+    }
+
+    private void CancelForm()
+    {
+        _showForm = false;
+        _error = null;
+    }
+
+    private void TogglePrinter(Guid printerId, ChangeEventArgs e)
+    {
+        var isChecked = e.Value is true;
+        if (isChecked)
+        {
+            if (!_model.PrinterIds.Contains(printerId))
+            {
+                _model.PrinterIds.Add(printerId);
+            }
+        }
+        else
+        {
+            _model.PrinterIds.Remove(printerId);
+            if (_model.DefaultPrinterId == printerId)
+            {
+                _model.DefaultPrinterId = null;
+            }
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        _saving = true;
+        _error = null;
+        try
+        {
+            if (_editingId is { } id)
+            {
+                await ZoneService.UpdateAsync(id, _model);
+            }
+            else
+            {
+                await ZoneService.CreateAsync(_model);
+            }
+            _showForm = false;
+            await ReloadAsync();
+        }
+        catch (AdminValidationException ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private async Task ConfirmDeleteAsync(Guid id)
+    {
+        _error = null;
+        try
+        {
+            await ZoneService.DeleteAsync(id);
+            await ReloadAsync();
+        }
+        catch (AdminValidationException ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _deletingId = null;
+        }
+    }
+
+    private static string DescribeRules(ZoneEntity zone)
+    {
+        if (zone.Rules.Count == 0)
+        {
+            return "—";
+        }
+
+        var parts = new List<string>();
+        if (zone.Rules.Any(r => r.GroupSid is not null)) parts.Add("group");
+        if (zone.Rules.Any(r => r.SubnetCidr is not null)) parts.Add("subnet");
+        if (zone.Rules.Any(r => r.OuDn is not null)) parts.Add("OU");
+        var kinds = parts.Count > 0 ? $" ({string.Join(", ", parts)})" : "";
+        return $"{zone.Rules.Count} rule{(zone.Rules.Count == 1 ? "" : "s")}{kinds}";
+    }
+
+    private static string? DefaultName(ZoneEntity zone)
+        => zone.DefaultPrinterId is { } id
+            ? zone.Printers.FirstOrDefault(p => p.Id == id)?.DisplayName
+            : null;
+}

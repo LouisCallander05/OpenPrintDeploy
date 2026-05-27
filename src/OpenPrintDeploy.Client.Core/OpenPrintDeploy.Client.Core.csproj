@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>OpenPrintDeploy.Client.Core</RootNamespace>
+    <AssemblyName>OpenPrintDeploy.Client.Core</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\OpenPrintDeploy.Shared\OpenPrintDeploy.Shared.csproj" />
+  </ItemGroup>
+
+</Project>

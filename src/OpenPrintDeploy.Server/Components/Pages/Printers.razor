@@ -1,0 +1,181 @@
+@page "/printers"
+@rendermode InteractiveServer
+@attribute [Authorize(Policy = AuthPolicies.Admin)]
+@using OpenPrintDeploy.Server.Admin
+@using OpenPrintDeploy.Server.Data.Entities
+@inject PrinterService PrinterService
+
+<PageTitle>Printers · OpenPrintDeploy</PageTitle>
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h1 class="mb-0">Printers</h1>
+    @if (!_showForm)
+    {
+        <button class="btn btn-primary" @onclick="StartCreate">Add printer</button>
+    }
+</div>
+
+@if (_error is not null)
+{
+    <div class="alert alert-danger" role="alert">@_error</div>
+}
+
+@if (_showForm)
+{
+    <div class="card mb-4">
+        <div class="card-body">
+            <h5 class="card-title">@(_editingId is null ? "New printer" : "Edit printer")</h5>
+            <EditForm Model="_model" OnValidSubmit="SaveAsync">
+                <DataAnnotationsValidator />
+                <div class="mb-3">
+                    <label class="form-label">UNC path</label>
+                    <InputText class="form-control" @bind-Value="_model.UncPath" placeholder="\\printsrv01\HR-MFP-01" />
+                    <ValidationMessage For="() => _model.UncPath" class="text-danger small" />
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Display name</label>
+                    <InputText class="form-control" @bind-Value="_model.DisplayName" placeholder="HR Multifunction (Floor 2)" />
+                    <ValidationMessage For="() => _model.DisplayName" class="text-danger small" />
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Location <span class="text-muted">(optional)</span></label>
+                    <InputText class="form-control" @bind-Value="_model.Location" placeholder="Building A · Floor 2" />
+                    <ValidationMessage For="() => _model.Location" class="text-danger small" />
+                </div>
+                <button type="submit" class="btn btn-primary" disabled="@_saving">Save</button>
+                <button type="button" class="btn btn-link" @onclick="CancelForm">Cancel</button>
+            </EditForm>
+        </div>
+    </div>
+}
+
+@if (_printers is null)
+{
+    <p class="text-muted">Loading…</p>
+}
+else if (_printers.Count == 0)
+{
+    <p class="text-muted">No printers yet. Add one to get started.</p>
+}
+else
+{
+    <table class="table table-hover align-middle">
+        <thead>
+            <tr>
+                <th>Display name</th>
+                <th>UNC path</th>
+                <th>Location</th>
+                <th class="text-end">Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var printer in _printers)
+            {
+                <tr>
+                    <td>@printer.DisplayName</td>
+                    <td><code>@printer.UncPath</code></td>
+                    <td>@(printer.Location ?? "—")</td>
+                    <td class="text-end">
+                        @if (_deletingId == printer.Id)
+                        {
+                            <span class="me-2 small">Delete?</span>
+                            <button class="btn btn-sm btn-danger" @onclick="() => ConfirmDeleteAsync(printer.Id)">Yes</button>
+                            <button class="btn btn-sm btn-outline-secondary" @onclick="() => _deletingId = null">No</button>
+                        }
+                        else
+                        {
+                            <button class="btn btn-sm btn-outline-primary" @onclick="() => StartEdit(printer)">Edit</button>
+                            <button class="btn btn-sm btn-outline-danger" @onclick="() => _deletingId = printer.Id">Delete</button>
+                        }
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+}
+
+@code {
+    private IReadOnlyList<PrinterEntity>? _printers;
+    private PrinterInput _model = new();
+    private Guid? _editingId;
+    private Guid? _deletingId;
+    private bool _showForm;
+    private bool _saving;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync() => await ReloadAsync();
+
+    private async Task ReloadAsync() => _printers = await PrinterService.GetAllAsync();
+
+    private void StartCreate()
+    {
+        _error = null;
+        _editingId = null;
+        _model = new PrinterInput();
+        _showForm = true;
+    }
+
+    private void StartEdit(PrinterEntity printer)
+    {
+        _error = null;
+        _editingId = printer.Id;
+        _model = new PrinterInput
+        {
+            UncPath = printer.UncPath,
+            DisplayName = printer.DisplayName,
+            Location = printer.Location,
+        };
+        _showForm = true;
+    }
+
+    private void CancelForm()
+    {
+        _showForm = false;
+        _error = null;
+    }
+
+    private async Task SaveAsync()
+    {
+        _saving = true;
+        _error = null;
+        try
+        {
+            if (_editingId is { } id)
+            {
+                await PrinterService.UpdateAsync(id, _model);
+            }
+            else
+            {
+                await PrinterService.CreateAsync(_model);
+            }
+            _showForm = false;
+            await ReloadAsync();
+        }
+        catch (AdminValidationException ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private async Task ConfirmDeleteAsync(Guid id)
+    {
+        _error = null;
+        try
+        {
+            await PrinterService.DeleteAsync(id);
+            await ReloadAsync();
+        }
+        catch (AdminValidationException ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _deletingId = null;
+        }
+    }
+}
