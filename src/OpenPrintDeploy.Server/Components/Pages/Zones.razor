@@ -179,6 +179,41 @@ else
         _zones = await ZoneService.GetAllAsync();
         _allPrinters = await PrinterService.GetAllAsync();
         await LoadGroupsAsync();
+        await ResolveZoneGroupNamesAsync();
+    }
+
+    /// <summary>
+    /// Targeted SID → name lookup for every group SID actually referenced by
+    /// a zone's rules. The catalog from <see cref="LoadGroupsAsync"/> only
+    /// covers the alphabetical first N groups, so a zone gated on something
+    /// like an "S-Staff" group beyond that window would otherwise render as a
+    /// raw SID in the list. One LDAP query per unique SID; runs in parallel.
+    /// </summary>
+    private async Task ResolveZoneGroupNamesAsync()
+    {
+        if (_zones is null) return;
+
+        var needLookup = _zones
+            .SelectMany(z => z.Rules)
+            .Where(r => !string.IsNullOrWhiteSpace(r.GroupSid))
+            .Select(r => r.GroupSid!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Where(sid => !_sidToName.ContainsKey(sid))
+            .ToList();
+
+        if (needLookup.Count == 0) return;
+
+        var resolved = await Task.WhenAll(needLookup.Select(async sid =>
+            (Sid: sid, Name: await Directory.ResolveGroupNameAsync(sid))));
+
+        foreach (var (sid, name) in resolved)
+        {
+            if (!string.IsNullOrWhiteSpace(name))
+            {
+                _sidToName[sid] = name;
+                _nameToSid[name] = sid;
+            }
+        }
     }
 
     private const int GroupSearchLimit = 500;
