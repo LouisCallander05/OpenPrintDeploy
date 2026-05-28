@@ -67,8 +67,9 @@
                             <div class="col-md-11">
                                 <label class="form-label small mb-0">Group</label>
                                 <input class="form-control form-control-sm" list="opd-group-options"
-                                       value="@rule.GroupName"
-                                       @oninput="e => OnGroupInputAsync(rule, e)"
+                                       @bind="rule.GroupName"
+                                       @bind:event="oninput"
+                                       @bind:after="() => OnGroupInputAsync(rule)"
                                        placeholder="@_groupPlaceholder" />
                             </div>
                             <div class="col-md-1">
@@ -245,14 +246,14 @@ else
     /// <summary>
     /// Per-keystroke typeahead: replaces the datalist with whatever the
     /// directory returns for the typed substring, debounced ~250ms so we
-    /// don't fire one LDAP query per character. Maps accumulate across
-    /// searches so a name picked-then-replaced-by-another-search still
-    /// resolves at save time.
+    /// don't fire one LDAP query per character. <see cref="RuleInput.GroupName"/>
+    /// is already updated by the @bind on the input — we just read from it.
+    /// Maps accumulate across searches so a name picked-then-replaced-by-another
+    /// -search still resolves at save time.
     /// </summary>
-    private async Task OnGroupInputAsync(RuleInput rule, ChangeEventArgs e)
+    private async Task OnGroupInputAsync(RuleInput rule)
     {
-        var typed = e.Value?.ToString() ?? string.Empty;
-        rule.GroupName = typed;
+        var typed = (rule.GroupName ?? string.Empty).Trim();
 
         _groupSearchCts?.Cancel();
         _groupSearchCts = new CancellationTokenSource();
@@ -270,7 +271,7 @@ else
         IReadOnlyList<DirectoryGroup> results;
         try
         {
-            results = await Directory.SearchGroupsAsync(typed.Trim(), GroupSearchLimit, token);
+            results = await Directory.SearchGroupsAsync(typed, GroupSearchLimit, token);
         }
         catch (OperationCanceledException)
         {

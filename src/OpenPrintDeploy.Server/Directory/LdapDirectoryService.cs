@@ -155,38 +155,30 @@ public sealed class LdapDirectoryService : IDirectoryService
         // don't re-sort the merged list — doing so would let alphabetical
         // substring hits like "0001-gs-Students-Year 09" leapfrog the prefix
         // matches like "0912-..." that the admin actually typed for.
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var prefixMatches = new List<DirectoryGroup>();
-
         if (query.Length > 0)
         {
             var prefixFilter = $"(&(objectClass=group)(|(cn={EscapeFilter(query)}*)(sAMAccountName={EscapeFilter(query)}*)))";
-            foreach (var g in ExecuteSearch(connection, endpoint, prefixFilter, limit))
-            {
-                if (seen.Add(g.Sid))
-                {
-                    prefixMatches.Add(g);
-                }
-            }
+            prefixMatches.AddRange(ExecuteSearch(connection, endpoint, prefixFilter, limit));
         }
 
+        // Substring fallback runs only when prefix returned NOTHING — the
+        // common typeahead case (structured group names) finishes in a single
+        // LDAP query that way. The fallback still covers the rare "match the
+        // middle of the name" case (e.g. typing "All Staff" with no "All*"
+        // groups in AD).
         var substringMatches = new List<DirectoryGroup>();
-        if (prefixMatches.Count < limit)
+        if (prefixMatches.Count == 0)
         {
             var fallback = query.Length == 0
                 ? "(objectClass=group)"
                 : $"(&(objectClass=group)(|(cn=*{EscapeFilter(query)}*)(sAMAccountName=*{EscapeFilter(query)}*)))";
-            foreach (var g in ExecuteSearch(connection, endpoint, fallback, limit - prefixMatches.Count))
-            {
-                if (seen.Add(g.Sid))
-                {
-                    substringMatches.Add(g);
-                }
-            }
+            substringMatches.AddRange(ExecuteSearch(connection, endpoint, fallback, limit));
         }
 
-        // Belt-and-braces alphabetical within each pass in case the server
-        // ignored our SortRequestControl. Pass order is preserved.
+        // Belt-and-braces alphabetical in case the server ignored our
+        // SortRequestControl. Prefix block before substring block — never
+        // re-sort the merged list.
         return prefixMatches
             .OrderBy(g => g.Name, StringComparer.OrdinalIgnoreCase)
             .Concat(substringMatches.OrderBy(g => g.Name, StringComparer.OrdinalIgnoreCase))
