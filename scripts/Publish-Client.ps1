@@ -99,6 +99,58 @@ if ($depsRaw -notmatch 'WindowsBase\.dll') {
     throw "Self-contained publish does not register WindowsBase.dll in deps.json. The bundle will crash on clean machines."
 }
 
+# The publish merges files from both runtime packs (Microsoft.NETCore.App.Runtime
+# and Microsoft.WindowsDesktop.App.Runtime). They share several filenames --
+# the most important being WindowsBase.dll. NETCore.App ships a 16KB legacy
+# facade with AssemblyVersion 4.0.0.0; WindowsDesktop.App ships the real 2.2MB
+# implementation with AssemblyVersion 8.0.0.0. The MSBuild publish target
+# happens to copy NETCore's facade *after* WindowsDesktop's real file, so the
+# bundled WindowsBase ends up as the broken facade. deps.json still says
+# "look up WindowsBase.dll under the WindowsDesktop runtime pack", so the .NET
+# loader asks for Version=8.0.0.0, gets the file but sees Version=4.0.0.0
+# metadata, and the tray crashes at startup on every clean endpoint with
+# "Could not load file or assembly 'WindowsBase'".
+#
+# Fix: after the publish, overlay every DLL the WindowsDesktop runtime pack
+# ships onto the publish output. WindowsDesktop always wins -> the real
+# WindowsBase.dll (and any other overlap) ends up in the bundle.
+$wpfVersionMatch = [regex]::Match($depsRaw, 'runtimepack\.Microsoft\.WindowsDesktop\.App\.Runtime\.win-x64/(?<v>\d+\.\d+\.\d+)')
+if (-not $wpfVersionMatch.Success) {
+    throw "Could not determine the WindowsDesktop runtime pack version from deps.json."
+}
+$wpfVersion = $wpfVersionMatch.Groups['v'].Value
+
+$wpfRuntimePackCandidates = @(
+    (Join-Path $env:USERPROFILE ".nuget\packages\microsoft.windowsdesktop.app.runtime.win-x64\$wpfVersion\runtimes\win-x64\lib\net8.0"),
+    "C:\Program Files\dotnet\packs\Microsoft.WindowsDesktop.App.Runtime.win-x64\$wpfVersion\runtimes\win-x64\lib\net8.0"
+)
+$wpfRuntimePackDir = $wpfRuntimePackCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+if (-not $wpfRuntimePackDir) {
+    throw ("Could not find WindowsDesktop runtime pack $wpfVersion locally. Searched:`n  " +
+           ($wpfRuntimePackCandidates -join "`n  "))
+}
+
+Write-Host "Overlaying WindowsDesktop runtime pack DLLs from $wpfRuntimePackDir..."
+$overlaid = 0
+Get-ChildItem $wpfRuntimePackDir -Filter *.dll | ForEach-Object {
+    $dest = Join-Path $resolvedOut $_.Name
+    if (Test-Path $dest) {
+        Copy-Item -Force -LiteralPath $_.FullName -Destination $dest
+        $overlaid++
+    }
+}
+Write-Host "  Overlaid $overlaid DLL(s)."
+
+# Final guard: WindowsBase.dll in the published output must be the real
+# AssemblyVersion 8.0.0.0 implementation, not the 4.0.0.0 facade.
+$wbPath = Join-Path $resolvedOut "WindowsBase.dll"
+$wbVer  = [System.Reflection.AssemblyName]::GetAssemblyName($wbPath).Version
+if ($wbVer.Major -lt 8) {
+    throw ("Bundled WindowsBase.dll is the wrong version ($wbVer). " +
+           "Expected the AssemblyVersion 8.x.x.x implementation from the WindowsDesktop runtime pack, " +
+           "not the AssemblyVersion 4.0.0.0 facade from the NETCore.App runtime pack.")
+}
+
 Write-Host ""
 Write-Host "Publish complete:" -ForegroundColor Green
 Write-Host "  $resolvedOut"
