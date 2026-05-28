@@ -216,8 +216,9 @@ internal static class ClientInstaller
         Console.WriteLine($"  Auto-start: HKLM\\{RunKeyPath}\\{RunValueName}");
         Console.WriteLine();
         Console.WriteLine("The tray will launch automatically the next time any user logs in.");
-        Console.WriteLine("To start it for the *current* user without logging out:");
-        Console.WriteLine($"  start \"\" \"{installedExe}\"");
+        Console.WriteLine("To start it for the *current* user without logging out, pick the line for your shell:");
+        Console.WriteLine($"  PowerShell:  & \"{installedExe}\"");
+        Console.WriteLine($"  cmd:         start \"\" \"{installedExe}\"");
     }
 
     // ----- filesystem helpers -----
