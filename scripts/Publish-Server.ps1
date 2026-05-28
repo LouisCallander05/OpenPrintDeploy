@@ -26,7 +26,11 @@ root. Default: publish/server.
 param(
     [string]$Configuration = "Release",
     [string]$Runtime = "win-x64",
-    [string]$OutDir = "publish/server"
+    [string]$OutDir = "publish/server",
+    # SemVer-ish string baked into AssemblyInformationalVersion. CI passes the
+    # git tag with the leading v stripped (e.g. "0.1.3"); local devs leave it
+    # blank and the csproj fallback ("0.0.0-dev") wins.
+    [string]$Version = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -38,6 +42,12 @@ $installerTmp = Join-Path $repoRoot "publish/installer-tmp"
 if (Test-Path $resolvedOut)   { Remove-Item -Recurse -Force $resolvedOut }
 if (Test-Path $installerTmp)  { Remove-Item -Recurse -Force $installerTmp }
 
+$versionProps = @()
+if (-not [string]::IsNullOrWhiteSpace($Version)) {
+    Write-Host "Stamping build with version $Version"
+    $versionProps = @("-p:Version=$Version")
+}
+
 Push-Location $repoRoot
 try {
     Write-Host "Publishing server (self-contained $Runtime) to $resolvedOut..."
@@ -46,6 +56,7 @@ try {
         -r $Runtime `
         --self-contained true `
         -p:PublishSingleFile=false `
+        @versionProps `
         -o $resolvedOut
     if ($LASTEXITCODE -ne 0) { throw "dotnet publish (server) failed (exit $LASTEXITCODE)" }
 
@@ -54,6 +65,7 @@ try {
         -c $Configuration `
         -r $Runtime `
         --self-contained true `
+        @versionProps `
         -o $installerTmp
     if ($LASTEXITCODE -ne 0) { throw "dotnet publish (installer) failed (exit $LASTEXITCODE)" }
 }

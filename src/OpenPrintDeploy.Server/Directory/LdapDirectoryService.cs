@@ -153,6 +153,13 @@ public sealed class LdapDirectoryService : IDirectoryService
             SizeLimit = Math.Max(0, limit),
         };
 
+        // Sort by cn ascending server-side so when the result set is larger
+        // than SizeLimit, the slice we get back is the alphabetically-earliest
+        // matches — not whatever insertion order AD happens to return. That
+        // makes "type any prefix of the group name and see it" actually work.
+        request.Controls.Add(new SortRequestControl(
+            new System.DirectoryServices.Protocols.SortKey("cn", null, reverseOrder: false)));
+
         SearchResponse response;
         try
         {
@@ -173,6 +180,8 @@ public sealed class LdapDirectoryService : IDirectoryService
             }
         }
 
+        // Already alphabetical from the server; the client-side OrderBy is a
+        // belt-and-braces sort in case the SortRequestControl isn't honoured.
         return groups
             .OrderBy(g => g.Name, StringComparer.OrdinalIgnoreCase)
             .ToList();

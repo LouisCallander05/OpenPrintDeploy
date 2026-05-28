@@ -1,6 +1,7 @@
 @page "/admin/directory"
 @rendermode InteractiveServer
 @attribute [Authorize(Policy = AuthPolicies.Admin)]
+@using System.Reflection
 @using OpenPrintDeploy.Server.Directory
 @inject IDirectoryService DirectoryService
 
@@ -8,6 +9,9 @@
 
 <h1>Directory</h1>
 
+<p class="text-muted small mb-1">
+    Server version: <code>@ServerVersion</code>
+</p>
 <p class="text-muted" style="max-width: 48rem;">
     Health check for the directory the server is talking to. On a domain-joined
     print server the defaults auto-discover a DC and search base, and the
@@ -81,4 +85,11 @@
 
     private static MarkupString Em(string text) => new($"<span class=\"text-muted\">{text}</span>");
     private static MarkupString Code(string text) => new($"<code>{System.Net.WebUtility.HtmlEncode(text)}</code>");
+
+    private static readonly string ServerVersion =
+        typeof(Program).Assembly
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?
+            .InformationalVersion
+        ?? typeof(Program).Assembly.GetName().Version?.ToString()
+        ?? "(unknown)";
 }

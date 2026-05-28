@@ -181,13 +181,15 @@ else
         await LoadGroupsAsync();
     }
 
+    private const int GroupSearchLimit = 500;
+
     private async Task LoadGroupsAsync()
     {
         // Initial seed: a first slice for the empty datalist and to know whether
         // the directory is reachable at all. SearchGroupsAsync gets re-called
         // per-keystroke from OnGroupInputAsync to widen the catalog as the
         // admin types — large directories never fit in a single fetch.
-        _groups = await Directory.SearchGroupsAsync(string.Empty, limit: 200);
+        _groups = await Directory.SearchGroupsAsync(string.Empty, GroupSearchLimit);
         AccumulateGroups(_groups);
         _groupPlaceholder = _groups.Count > 0
             ? "Start typing a group name…"
@@ -230,7 +232,16 @@ else
             return;
         }
 
-        var results = await Directory.SearchGroupsAsync(typed.Trim(), limit: 200, token);
+        IReadOnlyList<DirectoryGroup> results;
+        try
+        {
+            results = await Directory.SearchGroupsAsync(typed.Trim(), GroupSearchLimit, token);
+        }
+        catch (OperationCanceledException)
+        {
+            // A new keystroke arrived; let that one's search be the winner.
+            return;
+        }
         if (token.IsCancellationRequested)
         {
             return;

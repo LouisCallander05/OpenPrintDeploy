@@ -5,6 +5,10 @@
     <RootNamespace>OpenPrintDeploy.Server</RootNamespace>
     <AssemblyName>OpenPrintDeploy.Server</AssemblyName>
     <UserSecretsId>openprintdeploy-server</UserSecretsId>
+    <!-- CI passes -p:Version=<git-tag-stripped> on tag builds (see release.yml).
+         Local dev builds get this dev marker so the admin UI shows "0.0.0-dev"
+         instead of the misleading default 1.0.0.0. -->
+    <Version Condition="'$(Version)' == ''">0.0.0-dev</Version>
   </PropertyGroup>
 
   <ItemGroup>

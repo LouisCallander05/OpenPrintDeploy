@@ -28,11 +28,18 @@ jobs:
         with:
           dotnet-version: 8.0.x
 
+      - name: Resolve release version from tag
+        id: ver
+        shell: powershell
+        run: |
+          $v = "${{ github.ref_name }}".TrimStart('v')
+          echo "version=$v" >> $env:GITHUB_OUTPUT
+
       - name: Build + test
         run: dotnet test OpenPrintDeploy.sln -c Release -p:NuGetAudit=true --nologo
 
       - name: Publish server + installer
-        run: .\scripts\Publish-Server.ps1
+        run: .\scripts\Publish-Server.ps1 -Version "${{ steps.ver.outputs.version }}"
         shell: powershell
 
       - name: Zip artifact
