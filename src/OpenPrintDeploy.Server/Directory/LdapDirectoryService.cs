@@ -149,33 +149,47 @@ public sealed class LdapDirectoryService : IDirectoryService
         //   Pass 2 — substring fallback (cn=*q*) only if the prefix pass
         //            didn't fill the window. So a query that only matches
         //            something in the middle of the name (e.g. "All Staff")
-        //            still works — without letting common substrings (like
-        //            "09" buried in "Year 09" elsewhere) drown out the prefix
-        //            matches the admin meant.
-        var groups = new Dictionary<string, DirectoryGroup>(StringComparer.OrdinalIgnoreCase);
+        //            still works.
+        // The two passes are returned as ORDERED sections: prefix block first
+        // (alphabetical), then substring block (alphabetical). Crucially we
+        // don't re-sort the merged list — doing so would let alphabetical
+        // substring hits like "0001-gs-Students-Year 09" leapfrog the prefix
+        // matches like "0912-..." that the admin actually typed for.
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var prefixMatches = new List<DirectoryGroup>();
 
         if (query.Length > 0)
         {
             var prefixFilter = $"(&(objectClass=group)(|(cn={EscapeFilter(query)}*)(sAMAccountName={EscapeFilter(query)}*)))";
             foreach (var g in ExecuteSearch(connection, endpoint, prefixFilter, limit))
             {
-                groups[g.Sid] = g;
+                if (seen.Add(g.Sid))
+                {
+                    prefixMatches.Add(g);
+                }
             }
         }
 
-        if (groups.Count < limit)
+        var substringMatches = new List<DirectoryGroup>();
+        if (prefixMatches.Count < limit)
         {
             var fallback = query.Length == 0
                 ? "(objectClass=group)"
                 : $"(&(objectClass=group)(|(cn=*{EscapeFilter(query)}*)(sAMAccountName=*{EscapeFilter(query)}*)))";
-            foreach (var g in ExecuteSearch(connection, endpoint, fallback, limit - groups.Count))
+            foreach (var g in ExecuteSearch(connection, endpoint, fallback, limit - prefixMatches.Count))
             {
-                groups.TryAdd(g.Sid, g);
+                if (seen.Add(g.Sid))
+                {
+                    substringMatches.Add(g);
+                }
             }
         }
 
-        return groups.Values
+        // Belt-and-braces alphabetical within each pass in case the server
+        // ignored our SortRequestControl. Pass order is preserved.
+        return prefixMatches
             .OrderBy(g => g.Name, StringComparer.OrdinalIgnoreCase)
+            .Concat(substringMatches.OrderBy(g => g.Name, StringComparer.OrdinalIgnoreCase))
             .ToList();
     }
 
