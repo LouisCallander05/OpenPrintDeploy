@@ -142,21 +142,55 @@ public sealed class LdapDirectoryService : IDirectoryService
     private static List<DirectoryGroup> SearchGroupsCore(
         LdapConnection connection, Endpoint endpoint, string query, int limit)
     {
-        // Empty query lists the first groups; otherwise substring-match on the
-        // common name or the down-level (sAMAccountName) name.
-        var filter = query.Length == 0
-            ? "(objectClass=group)"
-            : $"(&(objectClass=group)(|(cn=*{EscapeFilter(query)}*)(sAMAccountName=*{EscapeFilter(query)}*)))";
+        // Two-pass search to make typeahead useful in real ADs:
+        //   Pass 1 — prefix match (cn=q* / sAMAccountName=q*). With structured
+        //            group names like "0912-ls-All Staff" this is what the
+        //            admin almost always wants, and the result set is small.
+        //   Pass 2 — substring fallback (cn=*q*) only if the prefix pass
+        //            didn't fill the window. So a query that only matches
+        //            something in the middle of the name (e.g. "All Staff")
+        //            still works — without letting common substrings (like
+        //            "09" buried in "Year 09" elsewhere) drown out the prefix
+        //            matches the admin meant.
+        var groups = new Dictionary<string, DirectoryGroup>(StringComparer.OrdinalIgnoreCase);
 
+        if (query.Length > 0)
+        {
+            var prefixFilter = $"(&(objectClass=group)(|(cn={EscapeFilter(query)}*)(sAMAccountName={EscapeFilter(query)}*)))";
+            foreach (var g in ExecuteSearch(connection, endpoint, prefixFilter, limit))
+            {
+                groups[g.Sid] = g;
+            }
+        }
+
+        if (groups.Count < limit)
+        {
+            var fallback = query.Length == 0
+                ? "(objectClass=group)"
+                : $"(&(objectClass=group)(|(cn=*{EscapeFilter(query)}*)(sAMAccountName=*{EscapeFilter(query)}*)))";
+            foreach (var g in ExecuteSearch(connection, endpoint, fallback, limit - groups.Count))
+            {
+                groups.TryAdd(g.Sid, g);
+            }
+        }
+
+        return groups.Values
+            .OrderBy(g => g.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    /// <summary>
+    /// Runs one filtered group search with the server sorting alphabetically by
+    /// <c>cn</c>. SizeLimitExceeded is treated as success with the capped slice
+    /// — that's what gives us a useful first-N when the directory is huge.
+    /// </summary>
+    private static List<DirectoryGroup> ExecuteSearch(
+        LdapConnection connection, Endpoint endpoint, string filter, int limit)
+    {
         var request = new SearchRequest(endpoint.SearchBase, filter, SearchScope.Subtree, "sAMAccountName", "cn", "objectSid")
         {
             SizeLimit = Math.Max(0, limit),
         };
-
-        // Sort by cn ascending server-side so when the result set is larger
-        // than SizeLimit, the slice we get back is the alphabetically-earliest
-        // matches — not whatever insertion order AD happens to return. That
-        // makes "type any prefix of the group name and see it" actually work.
         request.Controls.Add(new SortRequestControl(
             new System.DirectoryServices.Protocols.SortKey("cn", null, reverseOrder: false)));
 
@@ -167,7 +201,6 @@ public sealed class LdapDirectoryService : IDirectoryService
         }
         catch (DirectoryOperationException ex) when (ex.Response is SearchResponse partial)
         {
-            // A SizeLimitExceeded result still carries the capped entries.
             response = partial;
         }
 
@@ -179,12 +212,7 @@ public sealed class LdapDirectoryService : IDirectoryService
                 groups.Add(new DirectoryGroup(SidConverter.ToSidString(raw), GroupName(entry)));
             }
         }
-
-        // Already alphabetical from the server; the client-side OrderBy is a
-        // belt-and-braces sort in case the SortRequestControl isn't honoured.
-        return groups
-            .OrderBy(g => g.Name, StringComparer.OrdinalIgnoreCase)
-            .ToList();
+        return groups;
     }
 
     private string? ResolveGroupName(string sid)
