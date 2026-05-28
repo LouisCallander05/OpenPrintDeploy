@@ -34,8 +34,11 @@ or the project planning vault for the live design.
 src/
   OpenPrintDeploy.Shared          # DTOs / contracts shared by server + client
   OpenPrintDeploy.Server          # ASP.NET Core 8 — REST API + Blazor admin UI
-  OpenPrintDeploy.Client.Service  # .NET 8 Worker — runs as SYSTEM on the endpoint
+  OpenPrintDeploy.Client.Core     # Cross-platform sync/reconcile logic
   OpenPrintDeploy.Client.Tray     # WPF tray app — user session, applies printers
+installer/
+  OpenPrintDeploy.Installer       # Per-machine installer for the server
+  OpenPrintDeploy.Client.Installer # Per-machine installer for the tray (Intune-deployable)
 docs/
 OpenPrintDeploy.sln
 ```
@@ -110,6 +113,62 @@ To remove:
 OpenPrintDeploy.Installer.exe --uninstall                 :: leaves DB + install dir
 OpenPrintDeploy.Installer.exe --uninstall --remove-data   :: also wipes them
 ```
+
+## Endpoints: the tray client
+
+Each tag-push release also publishes a client artifact
+(`OpenPrintDeploy-client-win-x64.zip`) containing the tray exe and a matching
+installer. The tray is per-machine installed and auto-starts in every user's
+session via an `HKLM\…\Run` key; it authenticates to the server as the
+signed-in user via Kerberos, calls `/sync`, and applies the resolved printers
+to the user's per-user (HKCU) connection list.
+
+Manual install on a single workstation (admin PowerShell):
+
+```cmd
+OpenPrintDeploy.Client.Installer.exe install --server http://printsrv01.corp.local:5080
+```
+
+The installer drops binaries in `C:\Program Files\OpenPrintDeploy\Tray\`,
+writes `appsettings.json` with the server URL, and registers the Run-key
+auto-start. The tray will launch at next user logon; right-click its system
+tray icon to see "Sync now", the configured server, and the version.
+
+To uninstall:
+
+```cmd
+OpenPrintDeploy.Client.Installer.exe uninstall                :: leaves per-user state
+OpenPrintDeploy.Client.Installer.exe uninstall --remove-data  :: wipes installer's user state too
+```
+
+### Intune deployment
+
+For fleet rollout, wrap the published folder with Microsoft's
+[IntuneWinAppUtil][intunewin] and upload as a Win32 app:
+
+```cmd
+IntuneWinAppUtil.exe -c <publish\client> -s OpenPrintDeploy.Client.Installer.exe -o <out>
+```
+
+Intune install command:
+
+```
+OpenPrintDeploy.Client.Installer.exe install --server http://printsrv01.corp.local:5080
+```
+
+Intune uninstall command:
+
+```
+OpenPrintDeploy.Client.Installer.exe uninstall
+```
+
+Suggested detection rule (Registry):
+
+- Key: `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run`
+- Value: `OpenPrintDeployTray`
+- Detection: value exists.
+
+[intunewin]: https://github.com/Microsoft/Microsoft-Win32-Content-Prep-Tool
 
 ### Identity & directory config
 

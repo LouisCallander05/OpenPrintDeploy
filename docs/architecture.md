@@ -9,19 +9,22 @@ This file is a public-facing summary mirrored for repo readers.
 
 - **OpenPrintDeploy.Server** — ASP.NET Core 8 Windows Service. REST API +
   Blazor Server admin UI. SQLite via EF Core.
-- **OpenPrintDeploy.Client.Service** — .NET 8 Windows Service running as
-  SYSTEM. Schedules syncs, owns the HTTP client.
-- **OpenPrintDeploy.Client.Tray** — WPF tray app running in the user session.
-  Receives instructions from the service via named pipe, performs
-  `Add-Printer`/`Remove-Printer`, raises toasts.
-- **OpenPrintDeploy.Shared** — DTOs and contracts shared by all projects.
+- **OpenPrintDeploy.Client.Tray** — WPF tray app running in each user's
+  session. Authenticates to the server as the signed-in user (Kerberos via
+  `UseDefaultCredentials`), fetches the resolved printer set from `/sync`,
+  installs/removes per-user printer connections (`AddPrinterConnection` /
+  `DeletePrinterConnection`), and raises balloon toasts.
+- **OpenPrintDeploy.Shared** — DTOs and contracts shared by both sides.
 
-## Why two client processes
+## Why the tray app is sufficient
 
-`Add-Printer -ConnectionName` writes to HKCU — the per-user registry hive. A
-SYSTEM-context service cannot install per-user printer connections. The
-service handles networking and policy; the tray app applies the result in
-user context.
+The earlier design also called for a SYSTEM-context Worker service driving
+syncs via named-pipe IPC. We dropped it: `/sync` needs the *user's* group
+memberships to evaluate zones, and the user-session tray already
+authenticates as the user via Kerberos. A SYSTEM service would authenticate
+as the computer account — wrong identity for zone resolution. The tray runs
+per-user, owns the HTTP client, and does its own `Add-Printer` /
+`Remove-Printer` — no IPC needed.
 
 ## Auth
 

@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Windows;
 using System.Windows.Threading;
 using Application = System.Windows.Application;
@@ -35,6 +36,10 @@ public partial class App : Application
 
         var menu = new Forms.ContextMenuStrip();
         menu.Items.Add("Sync now", null, async (_, _) => await SyncAsync());
+        menu.Items.Add(new Forms.ToolStripSeparator());
+        menu.Items.Add($"Server: {settings.ServerBaseAddress}") .Enabled = false;
+        menu.Items.Add($"Version: {GetVersion()}").Enabled = false;
+        menu.Items.Add(new Forms.ToolStripSeparator());
         menu.Items.Add("Exit", null, (_, _) => Shutdown());
 
         _notifyIcon = new Forms.NotifyIcon
@@ -85,4 +90,12 @@ public partial class App : Application
         _coordinator?.Dispose();
         base.OnExit(e);
     }
+
+    /// <summary>Stamped at build time via -p:Version=&lt;tag&gt; in CI.</summary>
+    private static string GetVersion()
+        => typeof(App).Assembly
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?
+            .InformationalVersion
+        ?? typeof(App).Assembly.GetName().Version?.ToString()
+        ?? "(unknown)";
 }

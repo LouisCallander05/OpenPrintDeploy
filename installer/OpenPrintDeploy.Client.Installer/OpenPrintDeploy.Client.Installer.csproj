@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <RootNamespace>OpenPrintDeploy.Client.Installer</RootNamespace>
+    <AssemblyName>OpenPrintDeploy.Client.Installer</AssemblyName>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+
+    <Version Condition="'$(Version)' == ''">0.0.0-dev</Version>
+    <Company>OpenPrintDeploy</Company>
+    <Product>OpenPrintDeploy Client Installer</Product>
+    <FileDescription>Installs the OpenPrintDeploy tray client (per-machine, auto-start at logon).</FileDescription>
+    <Copyright>MIT</Copyright>
+
+    <NuGetAudit>false</NuGetAudit>
+  </PropertyGroup>
+
+</Project>

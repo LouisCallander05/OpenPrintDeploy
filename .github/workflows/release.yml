@@ -1,12 +1,14 @@
 name: release
 
-# Builds a self-contained Windows publish + installer on tag push, attaches the
-# zipped artifact to a GitHub Release for download onto the print server.
+# Builds self-contained Windows publishes (server + client tray) on tag push
+# and attaches the zipped artifacts to a GitHub Release.
 #
-#   git tag v0.1.0
-#   git push origin v0.1.0
+#   git tag v0.2.0
+#   git push origin v0.2.0
 #
-# ...then watch the Actions tab; when green, the Release page has the zip.
+# ...then watch the Actions tab; when green, the Release page has both zips:
+#   OpenPrintDeploy-server-win-x64.zip   <- copy to the print server, install
+#   OpenPrintDeploy-client-win-x64.zip   <- deploy via Intune to endpoints
 
 on:
   push:
@@ -42,18 +44,28 @@ jobs:
         run: .\scripts\Publish-Server.ps1 -Version "${{ steps.ver.outputs.version }}"
         shell: powershell
 
-      - name: Zip artifact
+      - name: Publish client tray + installer
+        run: .\scripts\Publish-Client.ps1 -Version "${{ steps.ver.outputs.version }}"
+        shell: powershell
+
+      - name: Zip artifacts
+        shell: powershell
         run: |
           Compress-Archive `
             -Path publish\server\* `
             -DestinationPath publish\OpenPrintDeploy-server-win-x64.zip `
             -CompressionLevel Optimal
-        shell: powershell
+          Compress-Archive `
+            -Path publish\client\* `
+            -DestinationPath publish\OpenPrintDeploy-client-win-x64.zip `
+            -CompressionLevel Optimal
 
-      - name: Create Release + upload zip
+      - name: Create Release + upload zips
         uses: softprops/action-gh-release@v2
         with:
-          files: publish/OpenPrintDeploy-server-win-x64.zip
+          files: |
+            publish/OpenPrintDeploy-server-win-x64.zip
+            publish/OpenPrintDeploy-client-win-x64.zip
           draft: false
           prerelease: false
           generate_release_notes: true
