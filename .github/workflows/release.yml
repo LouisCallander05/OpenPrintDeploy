@@ -1,0 +1,52 @@
+name: release
+
+# Builds a self-contained Windows publish + installer on tag push, attaches the
+# zipped artifact to a GitHub Release for download onto the print server.
+#
+#   git tag v0.1.0
+#   git push origin v0.1.0
+#
+# ...then watch the Actions tab; when green, the Release page has the zip.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write  # required to create the Release + upload assets
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Build + test
+        run: dotnet test OpenPrintDeploy.sln -c Release --nologo
+
+      - name: Publish server + installer
+        run: .\scripts\Publish-Server.ps1
+        shell: powershell
+
+      - name: Zip artifact
+        run: |
+          Compress-Archive `
+            -Path publish\server\* `
+            -DestinationPath publish\OpenPrintDeploy-server-win-x64.zip `
+            -CompressionLevel Optimal
+        shell: powershell
+
+      - name: Create Release + upload zip
+        uses: softprops/action-gh-release@v2
+        with:
+          files: publish/OpenPrintDeploy-server-win-x64.zip
+          draft: false
+          prerelease: false
+          generate_release_notes: true
