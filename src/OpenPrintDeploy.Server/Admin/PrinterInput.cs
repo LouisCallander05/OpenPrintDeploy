@@ -15,7 +15,4 @@ public sealed class PrinterInput
     [Required(ErrorMessage = "Display name is required.")]
     [StringLength(128)]
     public string DisplayName { get; set; } = "";
-
-    [StringLength(128)]
-    public string? Location { get; set; }
 }

@@ -31,10 +31,6 @@ namespace OpenPrintDeploy.Server.Data.Migrations
                         .HasMaxLength(128)
                         .HasColumnType("TEXT");
 
-                    b.Property<string>("Location")
-                        .HasMaxLength(128)
-                        .HasColumnType("TEXT");
-
                     b.Property<string>("UncPath")
                         .IsRequired()
                         .HasMaxLength(260)
@@ -57,9 +53,6 @@ namespace OpenPrintDeploy.Server.Data.Migrations
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("TEXT");
 
-                    b.Property<Guid?>("DefaultPrinterId")
-                        .HasColumnType("TEXT");
-
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasMaxLength(128)
@@ -69,8 +62,6 @@ namespace OpenPrintDeploy.Server.Data.Migrations
                         .HasColumnType("INTEGER");
 
                     b.HasKey("Id");
-
-                    b.HasIndex("DefaultPrinterId");
 
                     b.HasIndex("Name")
                         .IsUnique();
@@ -86,14 +77,6 @@ namespace OpenPrintDeploy.Server.Data.Migrations
 
                     b.Property<string>("GroupSid")
                         .HasMaxLength(256)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("OuDn")
-                        .HasMaxLength(512)
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("SubnetCidr")
-                        .HasMaxLength(64)
                         .HasColumnType("TEXT");
 
                     b.Property<Guid>("ZoneId")
@@ -119,16 +102,6 @@ namespace OpenPrintDeploy.Server.Data.Migrations
                     b.HasIndex("ZonesId");
 
                     b.ToTable("ZonePrinters", (string)null);
-                });
-
-            modelBuilder.Entity("OpenPrintDeploy.Server.Data.Entities.ZoneEntity", b =>
-                {
-                    b.HasOne("OpenPrintDeploy.Server.Data.Entities.PrinterEntity", "DefaultPrinter")
-                        .WithMany()
-                        .HasForeignKey("DefaultPrinterId")
-                        .OnDelete(DeleteBehavior.SetNull);
-
-                    b.Navigation("DefaultPrinter");
                 });
 
             modelBuilder.Entity("OpenPrintDeploy.Server.Data.Entities.ZoneRuleEntity", b =>

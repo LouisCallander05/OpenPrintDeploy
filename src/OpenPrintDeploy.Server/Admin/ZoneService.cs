@@ -1,4 +1,3 @@
-using System.Net;
 using Microsoft.EntityFrameworkCore;
 using OpenPrintDeploy.Server.Data;
 using OpenPrintDeploy.Server.Data.Entities;
@@ -46,14 +45,13 @@ public sealed class ZoneService
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
         await EnsureNameIsUniqueAsync(db, input.Name, excludingId: null, ct);
 
-        var (rules, printerIds, defaultId) = Normalize(input);
+        var (rules, printerIds) = Normalize(input);
         var printers = await LoadPrintersAsync(db, printerIds, ct);
 
         var zone = new ZoneEntity
         {
             Name = input.Name.Trim(),
             Priority = input.Priority,
-            DefaultPrinterId = ClampDefault(defaultId, printers),
             Rules = rules,
             Printers = printers,
         };
@@ -73,12 +71,11 @@ public sealed class ZoneService
 
         await EnsureNameIsUniqueAsync(db, input.Name, excludingId: id, ct);
 
-        var (rules, printerIds, defaultId) = Normalize(input);
+        var (rules, printerIds) = Normalize(input);
         var printers = await LoadPrintersAsync(db, printerIds, ct);
 
         zone.Name = input.Name.Trim();
         zone.Priority = input.Priority;
-        zone.DefaultPrinterId = ClampDefault(defaultId, printers);
 
         // Replace rules wholesale — simplest correct reconciliation for a
         // handful of rules per zone.
@@ -108,11 +105,10 @@ public sealed class ZoneService
     }
 
     /// <summary>
-    /// Cleans rules (drops empty ones, blanks → null, validates CIDR) and
-    /// returns the de-duplicated printer ids. Throws if nothing usable remains.
+    /// Drops empty rules (a rule with no group is meaningless) and de-duplicates
+    /// printer ids. Throws if nothing usable remains.
     /// </summary>
-    private static (List<ZoneRuleEntity> Rules, List<Guid> PrinterIds, Guid? DefaultId) Normalize(
-        ZoneInput input)
+    private static (List<ZoneRuleEntity> Rules, List<Guid> PrinterIds) Normalize(ZoneInput input)
     {
         var rules = new List<ZoneRuleEntity>();
         foreach (var r in input.Rules)
@@ -122,29 +118,16 @@ public sealed class ZoneService
                 continue;
             }
 
-            var cidr = NullIfBlank(r.SubnetCidr);
-            if (cidr is not null && !IPNetwork.TryParse(cidr, out _))
-            {
-                throw new AdminValidationException(
-                    $"'{cidr}' is not a valid subnet in CIDR notation (e.g. 10.0.0.0/24).");
-            }
-
-            rules.Add(new ZoneRuleEntity
-            {
-                GroupSid = NullIfBlank(r.GroupSid),
-                SubnetCidr = cidr,
-                OuDn = NullIfBlank(r.OuDn),
-            });
+            rules.Add(new ZoneRuleEntity { GroupSid = r.GroupSid!.Trim() });
         }
 
         if (rules.Count == 0)
         {
-            throw new AdminValidationException(
-                "A zone needs at least one rule with a group, subnet, or OU set.");
+            throw new AdminValidationException("A zone needs at least one rule with a group set.");
         }
 
         var printerIds = input.PrinterIds.Distinct().ToList();
-        return (rules, printerIds, input.DefaultPrinterId);
+        return (rules, printerIds);
     }
 
     private static async Task<List<PrinterEntity>> LoadPrintersAsync(
@@ -158,9 +141,6 @@ public sealed class ZoneService
         return await db.Printers.Where(p => printerIds.Contains(p.Id)).ToListAsync(ct);
     }
 
-    private static Guid? ClampDefault(Guid? defaultId, List<PrinterEntity> printers)
-        => defaultId is { } d && printers.Any(p => p.Id == d) ? d : null;
-
     private static async Task EnsureNameIsUniqueAsync(
         AppDbContext db, string name, Guid? excludingId, CancellationToken ct)
     {
@@ -172,7 +152,4 @@ public sealed class ZoneService
             throw new AdminValidationException($"A zone named '{trimmed}' already exists.");
         }
     }
-
-    private static string? NullIfBlank(string? value)
-        => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 }

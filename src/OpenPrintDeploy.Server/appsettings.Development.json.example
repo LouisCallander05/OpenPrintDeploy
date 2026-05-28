@@ -1,0 +1,36 @@
+// Copy this file to appsettings.Development.json (which is gitignored) to run
+// the server locally without Active Directory. It selects the header-based dev
+// auth handler and the in-memory Stub directory.
+//
+//   dotnet run --project src/OpenPrintDeploy.Server
+//
+// The Stub user -> group-SID map must line up with the SIDs the dev data seeder
+// uses for its zone rules (see Data/DevDataSeeder.cs): S-1-5-21-DEMO-HR for the
+// HR zone, S-1-5-21-DEMO-ENG for Engineering. With DefaultUser="hruser", an
+// un-headered request resolves to the HR zone; override per request with the
+// X-Dev-User header (e.g. "enguser", or "nobody" for an empty set).
+//
+// The "Groups" name -> SID map backs the zone-rule group picker in the admin UI,
+// so an admin can choose "HR-Staff" instead of typing the raw SID.
+{
+  "Urls": "http://localhost:5080",
+  "Auth": {
+    "Mode": "Dev",
+    "Dev": {
+      "DefaultUser": "hruser"
+    }
+  },
+  "Directory": {
+    "Provider": "Stub",
+    "Stub": {
+      "Users": {
+        "hruser": [ "S-1-5-21-DEMO-HR" ],
+        "enguser": [ "S-1-5-21-DEMO-ENG" ]
+      },
+      "Groups": {
+        "HR-Staff": "S-1-5-21-DEMO-HR",
+        "Engineering-Team": "S-1-5-21-DEMO-ENG"
+      }
+    }
+  }
+}

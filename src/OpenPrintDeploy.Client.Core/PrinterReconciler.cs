@@ -5,8 +5,7 @@ namespace OpenPrintDeploy.Client.Core;
 /// <summary>What the applier must do to converge on the server's resolved set.</summary>
 public sealed record ReconcileResult(
     IReadOnlyList<PrinterDto> ToAdd,
-    IReadOnlyList<string> ToRemove,
-    string? DefaultToSet);
+    IReadOnlyList<string> ToRemove);
 
 /// <summary>
 /// Pure diff between the server's desired printer set and the set this client
@@ -37,6 +36,6 @@ public static class PrinterReconciler
             .Where(unc => !desiredUncs.Contains(unc))
             .ToList();
 
-        return new ReconcileResult(toAdd, toRemove, desired.DefaultPrinterUnc);
+        return new ReconcileResult(toAdd, toRemove);
     }
 }

@@ -52,10 +52,9 @@ public sealed class ZoneRepositoryTests : IAsyncDisposable
             Rules =
             [
                 new ZoneRuleEntity { GroupSid = "S-1-5-21-1" },
-                new ZoneRuleEntity { SubnetCidr = "10.0.0.0/24", OuDn = "OU=Sales,DC=corp" },
+                new ZoneRuleEntity { GroupSid = "S-1-5-21-2" },
             ],
             Printers = [p1, p2],
-            DefaultPrinterId = p2.Id,
         };
         _db.Zones.Add(zone);
         await _db.SaveChangesAsync();
@@ -70,21 +69,20 @@ public sealed class ZoneRepositoryTests : IAsyncDisposable
         var z = Assert.Single(loaded);
         Assert.Equal("Z1", z.Name);
         Assert.Equal(42, z.Priority);
-        Assert.Equal(p2.Id, z.DefaultPrinterId);
         Assert.Equal(2, z.Rules.Count);
         Assert.Contains(z.Rules, r => r.GroupSid == "S-1-5-21-1");
-        Assert.Contains(z.Rules, r => r.SubnetCidr == "10.0.0.0/24" && r.OuDn == "OU=Sales,DC=corp");
+        Assert.Contains(z.Rules, r => r.GroupSid == "S-1-5-21-2");
         Assert.Equal(2, z.PrinterIds.Count);
         Assert.Contains(p1.Id, z.PrinterIds);
         Assert.Contains(p2.Id, z.PrinterIds);
     }
 
     [Fact]
-    public async Task SeederPopulatesThreeZones()
+    public async Task SeederPopulatesTwoZones()
     {
         await DevDataSeeder.SeedAsync(_db);
 
-        Assert.Equal(3, await _db.Zones.CountAsync());
+        Assert.Equal(2, await _db.Zones.CountAsync());
         Assert.Equal(3, await _db.Printers.CountAsync());
     }
 
@@ -94,7 +92,7 @@ public sealed class ZoneRepositoryTests : IAsyncDisposable
         await DevDataSeeder.SeedAsync(_db);
         await DevDataSeeder.SeedAsync(_db);
 
-        Assert.Equal(3, await _db.Zones.CountAsync());
+        Assert.Equal(2, await _db.Zones.CountAsync());
     }
 
     private AppDbContext NewContext()

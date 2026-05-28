@@ -43,7 +43,6 @@ public sealed class PrinterService
         {
             UncPath = input.UncPath.Trim(),
             DisplayName = input.DisplayName.Trim(),
-            Location = NullIfBlank(input.Location),
         };
         db.Printers.Add(printer);
         await db.SaveChangesAsync(ct);
@@ -60,7 +59,6 @@ public sealed class PrinterService
 
         printer.UncPath = input.UncPath.Trim();
         printer.DisplayName = input.DisplayName.Trim();
-        printer.Location = NullIfBlank(input.Location);
         await db.SaveChangesAsync(ct);
     }
 
@@ -88,7 +86,4 @@ public sealed class PrinterService
             throw new AdminValidationException($"A printer with UNC path '{trimmed}' already exists.");
         }
     }
-
-    private static string? NullIfBlank(string? value)
-        => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 }

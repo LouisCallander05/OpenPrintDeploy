@@ -1,0 +1,84 @@
+@page "/admin/directory"
+@rendermode InteractiveServer
+@attribute [Authorize(Policy = AuthPolicies.Admin)]
+@using OpenPrintDeploy.Server.Directory
+@inject IDirectoryService DirectoryService
+
+<PageTitle>Directory · OpenPrintDeploy</PageTitle>
+
+<h1>Directory</h1>
+
+<p class="text-muted" style="max-width: 48rem;">
+    Health check for the directory the server is talking to. On a domain-joined
+    print server the defaults auto-discover a DC and search base, and the
+    service binds with the process identity (Local SYSTEM, by default — the
+    computer account) — no password in config.
+</p>
+
+<button class="btn btn-primary mb-3" @onclick="TestAsync" disabled="@_busy">
+    @(_busy ? "Testing…" : "Test connection")
+</button>
+
+@if (_diag is { } d)
+{
+    <div class="card" style="max-width: 48rem;">
+        <div class="card-body">
+            <div class="@(d.Connected ? "text-success" : "text-danger") fw-semibold mb-2">
+                @(d.Connected ? "✓ Connected" : "✗ Not connected")
+            </div>
+
+            <dl class="row mb-0">
+                <dt class="col-sm-4">Provider</dt>
+                <dd class="col-sm-8"><code>@d.Provider</code></dd>
+
+                <dt class="col-sm-4">Auth mode</dt>
+                <dd class="col-sm-8"><code>@d.AuthMode</code></dd>
+
+                <dt class="col-sm-4">Server</dt>
+                <dd class="col-sm-8">@(d.Server is null ? Em("(not resolved)") : Code(d.Server))</dd>
+
+                <dt class="col-sm-4">Search base</dt>
+                <dd class="col-sm-8">@(d.SearchBase is null ? Em("(not resolved)") : Code(d.SearchBase))</dd>
+
+                <dt class="col-sm-4">Sample group count</dt>
+                <dd class="col-sm-8">
+                    @if (d.SampleGroupCount is { } n)
+                    {
+                        <span>@n returned by a probe query</span>
+                    }
+                    else
+                    {
+                        @Em("(not run)")
+                    }
+                </dd>
+
+                @if (d.Error is { } err)
+                {
+                    <dt class="col-sm-4">Error</dt>
+                    <dd class="col-sm-8"><code class="text-danger">@err</code></dd>
+                }
+            </dl>
+        </div>
+    </div>
+}
+
+@code {
+    private DirectoryDiagnostics? _diag;
+    private bool _busy;
+
+    private async Task TestAsync()
+    {
+        _busy = true;
+        try
+        {
+            _diag = await DirectoryService.GetDiagnosticsAsync();
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private static MarkupString Em(string text) => new($"<span class=\"text-muted\">{text}</span>");
+    private static MarkupString Code(string text) => new($"<code>{System.Net.WebUtility.HtmlEncode(text)}</code>");
+}

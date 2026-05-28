@@ -27,7 +27,10 @@ user context.
 
 - Admin browser → server: Negotiate (Windows Integrated Auth)
 - Client → server: Negotiate / Kerberos
-- Server → LDAP: dedicated service account, DPAPI-encrypted bind password
+- Server → LDAP: Negotiate (Kerberos) using the server process identity. On a
+  domain-joined print server running as Local SYSTEM that's the computer
+  account; nothing about the bind lives in config. A `Basic` bind with a
+  configured `BindDn`/`BindPassword` is supported for non-joined hosts.
 
 ## Data model
 
@@ -36,14 +39,15 @@ Printer, Zone, ZoneRule, ZonePrinter, Client, AuditLog. See planning vault
 
 ## Zone evaluation
 
-For a `(user, machine, ip)` request:
+For a `(user)` request:
 
 1. Resolve user's transitive AD group memberships (`tokenGroups`).
-2. Find zones with at least one matching ZoneRule (group + subnet + OU,
-   nulls ignored, all non-null criteria must match within a rule).
+2. Find zones with at least one ZoneRule whose group SID the user holds.
 3. Union the assigned printers across matched zones.
-4. Resolve the default printer by zone priority.
-5. Return `{ printers: [...], default: "..." }`.
+4. Return `{ printers: [...] }`.
+
+Zone `Priority` is a sort order in the admin UI only — it does not affect
+evaluation.
 
 ## Sync triggers
 

@@ -12,8 +12,7 @@ public sealed class SyncOrchestratorTests
     public async Task SyncOnce_AppliesDiff_AndReturnsNewManagedSet()
     {
         var server = new SyncResponseDto(
-            [new PrinterDto("HR", @"\\srv\a", null), new PrinterDto("Lobby", @"\\srv\b", null)],
-            @"\\srv\a");
+            [new PrinterDto("HR", @"\\srv\a"), new PrinterDto("Lobby", @"\\srv\b")]);
         var api = new SyncApiClient(StubHttpClient(server));
         var applier = new RecordingApplier();
         var orchestrator = new SyncOrchestrator(api, applier);
@@ -23,7 +22,6 @@ public sealed class SyncOrchestratorTests
         Assert.NotNull(applier.Applied);
         Assert.Equal([@"\\srv\a"], applier.Applied!.ToAdd.Select(p => p.UncPath));
         Assert.Equal([@"\\srv\c"], applier.Applied.ToRemove);
-        Assert.Equal(@"\\srv\a", applier.Applied.DefaultToSet);
         Assert.Equal([@"\\srv\a", @"\\srv\b"], managedAfter.OrderBy(u => u));
     }
 

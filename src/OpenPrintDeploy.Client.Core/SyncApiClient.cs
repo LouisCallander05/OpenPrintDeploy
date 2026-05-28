@@ -23,7 +23,7 @@ public sealed class SyncApiClient
         using var response = await _http.PostAsJsonAsync("sync", new SyncRequestDto(machineName), ct);
         response.EnsureSuccessStatusCode();
         var result = await response.Content.ReadFromJsonAsync<SyncResponseDto>(ct);
-        return result ?? new SyncResponseDto([], null);
+        return result ?? new SyncResponseDto([]);
     }
 
     /// <summary>

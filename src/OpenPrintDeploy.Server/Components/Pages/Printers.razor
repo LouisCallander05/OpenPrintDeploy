@@ -3,21 +3,100 @@
 @attribute [Authorize(Policy = AuthPolicies.Admin)]
 @using OpenPrintDeploy.Server.Admin
 @using OpenPrintDeploy.Server.Data.Entities
+@using OpenPrintDeploy.Server.Spooler
 @inject PrinterService PrinterService
+@inject IPrintSpoolerService Spooler
 
 <PageTitle>Printers · OpenPrintDeploy</PageTitle>
 
 <div class="d-flex justify-content-between align-items-center mb-3">
     <h1 class="mb-0">Printers</h1>
-    @if (!_showForm)
+    @if (!_showForm && !_importing)
     {
-        <button class="btn btn-primary" @onclick="StartCreate">Add printer</button>
+        <div>
+            <button class="btn btn-outline-secondary me-2" @onclick="StartImportAsync">Import from spooler</button>
+            <button class="btn btn-primary" @onclick="StartCreate">Add printer</button>
+        </div>
     }
 </div>
 
 @if (_error is not null)
 {
     <div class="alert alert-danger" role="alert">@_error</div>
+}
+
+@if (_importSummary is not null)
+{
+    <div class="alert alert-success" role="alert">@_importSummary</div>
+}
+
+@if (_importing)
+{
+    <div class="card mb-4">
+        <div class="card-body">
+            <h5 class="card-title">Import from spooler</h5>
+            <p class="form-text mt-0">
+                Shared printers detected on this host. Tick the ones to add — edit
+                their names and locations first if you like. Printers already in
+                OpenPrintDeploy are listed for context but can't be re-imported.
+            </p>
+
+            @if (_discoveryError is not null)
+            {
+                <div class="alert alert-warning">@_discoveryError</div>
+            }
+
+            @if (_discovered.Count == 0)
+            {
+                <p class="text-muted">Nothing to import.</p>
+            }
+            else
+            {
+                <table class="table table-sm align-middle">
+                    <thead>
+                        <tr>
+                            <th style="width: 2.5rem;"></th>
+                            <th>Display name</th>
+                            <th>UNC path</th>
+                            <th>Driver</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var row in _discovered)
+                        {
+                            <tr class="@(row.AlreadyImported ? "text-muted" : "")">
+                                <td>
+                                    <input class="form-check-input" type="checkbox"
+                                           checked="@row.Selected"
+                                           disabled="@row.AlreadyImported"
+                                           @onchange="e => row.Selected = e.Value is true" />
+                                </td>
+                                <td>
+                                    @if (row.AlreadyImported)
+                                    {
+                                        <div>@row.DisplayName</div>
+                                        <span class="badge text-bg-secondary">already imported</span>
+                                    }
+                                    else
+                                    {
+                                        <input class="form-control form-control-sm" @bind="row.DisplayName" />
+                                    }
+                                </td>
+                                <td><code>@row.Source.UncPath</code></td>
+                                <td class="small text-muted">@(row.Source.Driver ?? "—")</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+
+            <button class="btn btn-primary" @onclick="ImportSelectedAsync"
+                    disabled="@(_importBusy || !_discovered.Any(r => r.Selected && !r.AlreadyImported))">
+                Import selected
+            </button>
+            <button class="btn btn-link" @onclick="CancelImport" disabled="@_importBusy">Cancel</button>
+        </div>
+    </div>
 }
 
 @if (_showForm)
@@ -36,11 +115,6 @@
                     <label class="form-label">Display name</label>
                     <InputText class="form-control" @bind-Value="_model.DisplayName" placeholder="HR Multifunction (Floor 2)" />
                     <ValidationMessage For="() => _model.DisplayName" class="text-danger small" />
-                </div>
-                <div class="mb-3">
-                    <label class="form-label">Location <span class="text-muted">(optional)</span></label>
-                    <InputText class="form-control" @bind-Value="_model.Location" placeholder="Building A · Floor 2" />
-                    <ValidationMessage For="() => _model.Location" class="text-danger small" />
                 </div>
                 <button type="submit" class="btn btn-primary" disabled="@_saving">Save</button>
                 <button type="button" class="btn btn-link" @onclick="CancelForm">Cancel</button>
@@ -64,7 +138,6 @@ else
             <tr>
                 <th>Display name</th>
                 <th>UNC path</th>
-                <th>Location</th>
                 <th class="text-end">Actions</th>
             </tr>
         </thead>
@@ -74,7 +147,6 @@ else
                 <tr>
                     <td>@printer.DisplayName</td>
                     <td><code>@printer.UncPath</code></td>
-                    <td>@(printer.Location ?? "—")</td>
                     <td class="text-end">
                         @if (_deletingId == printer.Id)
                         {
@@ -103,6 +175,20 @@ else
     private bool _saving;
     private string? _error;
 
+    private bool _importing;
+    private bool _importBusy;
+    private string? _discoveryError;
+    private string? _importSummary;
+    private List<DiscoveredPrinterRow> _discovered = [];
+
+    private sealed class DiscoveredPrinterRow
+    {
+        public required DiscoveredPrinter Source { get; init; }
+        public bool Selected { get; set; }
+        public bool AlreadyImported { get; init; }
+        public string DisplayName { get; set; } = string.Empty;
+    }
+
     protected override async Task OnInitializedAsync() => await ReloadAsync();
 
     private async Task ReloadAsync() => _printers = await PrinterService.GetAllAsync();
@@ -113,6 +199,85 @@ else
         _editingId = null;
         _model = new PrinterInput();
         _showForm = true;
+        CancelImport();
+    }
+
+    private async Task StartImportAsync()
+    {
+        _error = null;
+        _showForm = false;
+        _importing = true;
+        _discoveryError = null;
+        _importSummary = null;
+        _discovered = [];
+
+        var existing = new HashSet<string>(
+            (_printers ?? []).Select(p => p.UncPath),
+            StringComparer.OrdinalIgnoreCase);
+
+        var found = await Spooler.GetSharedPrintersAsync();
+        _discovered = found
+            .Select(d => new DiscoveredPrinterRow
+            {
+                Source = d,
+                AlreadyImported = existing.Contains(d.UncPath),
+                Selected = !existing.Contains(d.UncPath),
+                DisplayName = d.DisplayName,
+            })
+            .ToList();
+
+        if (_discovered.Count == 0)
+        {
+            _discoveryError = OperatingSystem.IsWindows()
+                ? "The local print spooler reported no shared printers. Add printers manually here."
+                : "Spooler discovery only runs on Windows hosts. Add printers manually here.";
+        }
+    }
+
+    private void CancelImport()
+    {
+        _importing = false;
+        _discovered = [];
+        _discoveryError = null;
+    }
+
+    private async Task ImportSelectedAsync()
+    {
+        _importBusy = true;
+        _error = null;
+        try
+        {
+            var toImport = _discovered.Where(r => r.Selected && !r.AlreadyImported).ToList();
+            var errors = new List<string>();
+            var imported = 0;
+            foreach (var row in toImport)
+            {
+                var input = new PrinterInput
+                {
+                    UncPath = row.Source.UncPath,
+                    DisplayName = string.IsNullOrWhiteSpace(row.DisplayName) ? row.Source.ShareName : row.DisplayName.Trim(),
+                };
+                try
+                {
+                    await PrinterService.CreateAsync(input);
+                    imported++;
+                }
+                catch (AdminValidationException ex)
+                {
+                    errors.Add($"{row.Source.UncPath}: {ex.Message}");
+                }
+            }
+
+            await ReloadAsync();
+            _importSummary = errors.Count == 0
+                ? $"Imported {imported} printer{(imported == 1 ? "" : "s")}."
+                : $"Imported {imported} of {imported + errors.Count}. Skipped: {string.Join("; ", errors)}";
+            CancelImport();
+        }
+        finally
+        {
+            _importBusy = false;
+        }
     }
 
     private void StartEdit(PrinterEntity printer)
@@ -123,7 +288,6 @@ else
         {
             UncPath = printer.UncPath,
             DisplayName = printer.DisplayName,
-            Location = printer.Location,
         };
         _showForm = true;
     }

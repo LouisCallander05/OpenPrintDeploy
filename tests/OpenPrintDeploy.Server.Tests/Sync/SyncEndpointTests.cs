@@ -23,7 +23,7 @@ public sealed class SyncEndpointTests : IClassFixture<SyncEndpointTests.TestServ
     }
 
     [Fact]
-    public async Task Sync_AsHrUser_ReturnsHrPrintersWithDefault()
+    public async Task Sync_AsHrUser_ReturnsHrPrinters()
     {
         var client = _factory.CreateClient();
         var request = new HttpRequestMessage(HttpMethod.Post, "/sync")
@@ -40,7 +40,6 @@ public sealed class SyncEndpointTests : IClassFixture<SyncEndpointTests.TestServ
         Assert.Contains(dto!.Printers, p => p.UncPath == @"\\printsrv01\HR-MFP-01");
         Assert.Contains(dto.Printers, p => p.UncPath == @"\\printsrv01\Lobby-Mono");
         Assert.DoesNotContain(dto.Printers, p => p.UncPath == @"\\printsrv01\ENG-Color-01");
-        Assert.Equal(@"\\printsrv01\HR-MFP-01", dto.DefaultPrinterUnc);
     }
 
     [Fact]
@@ -59,7 +58,6 @@ public sealed class SyncEndpointTests : IClassFixture<SyncEndpointTests.TestServ
         var dto = await response.Content.ReadFromJsonAsync<SyncResponseDto>();
         Assert.NotNull(dto);
         Assert.Empty(dto!.Printers);
-        Assert.Null(dto.DefaultPrinterUnc);
     }
 
     [Fact]
@@ -87,7 +85,21 @@ public sealed class SyncEndpointTests : IClassFixture<SyncEndpointTests.TestServ
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             builder.UseEnvironment("Development");
-            builder.UseSetting("ConnectionStrings:AppDb", $"Data Source={_dbPath}");
+
+            // Tests must own their config rather than depend on a developer's
+            // (gitignored) appsettings.Development.json. Pin the dev auth handler,
+            // the in-memory Stub directory mapped to the seeded zone SIDs, and an
+            // isolated SQLite file so the run is hermetic on any machine.
+            builder.ConfigureAppConfiguration((_, config) =>
+                config.AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["ConnectionStrings:AppDb"] = $"Data Source={_dbPath}",
+                    ["Auth:Mode"] = "Dev",
+                    ["Auth:Dev:DefaultUser"] = "hruser",
+                    ["Directory:Provider"] = "Stub",
+                    ["Directory:Stub:Users:hruser:0"] = "S-1-5-21-DEMO-HR",
+                    ["Directory:Stub:Users:enguser:0"] = "S-1-5-21-DEMO-ENG",
+                }));
         }
 
         protected override void Dispose(bool disposing)

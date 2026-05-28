@@ -32,11 +32,6 @@ public sealed class WindowsPrinterApplier : IPrinterApplier
             DeletePrinterConnection(unc);
         }
 
-        if (!string.IsNullOrEmpty(plan.DefaultToSet))
-        {
-            SetDefaultPrinter(plan.DefaultToSet);
-        }
-
         return Task.CompletedTask;
     }
 
@@ -45,7 +40,4 @@ public sealed class WindowsPrinterApplier : IPrinterApplier
 
     [DllImport("winspool.drv", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern bool DeletePrinterConnection(string pName);
-
-    [DllImport("winspool.drv", CharSet = CharSet.Unicode, SetLastError = true)]
-    private static extern bool SetDefaultPrinter(string pName);
 }

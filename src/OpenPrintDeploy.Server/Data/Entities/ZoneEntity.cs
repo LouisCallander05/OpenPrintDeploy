@@ -6,16 +6,8 @@ public sealed class ZoneEntity
 
     public required string Name { get; set; }
 
-    /// <summary>Higher priority wins when resolving the default printer.</summary>
+    /// <summary>Display sort order in the admin UI — higher first. Has no effect on evaluation.</summary>
     public int Priority { get; set; }
-
-    /// <summary>
-    /// Nullable FK to one of the printers assigned to this zone. Not enforced
-    /// at the DB layer that the default is in <see cref="Printers"/>; the
-    /// evaluator guards against drift at runtime.
-    /// </summary>
-    public Guid? DefaultPrinterId { get; set; }
-    public PrinterEntity? DefaultPrinter { get; set; }
 
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 

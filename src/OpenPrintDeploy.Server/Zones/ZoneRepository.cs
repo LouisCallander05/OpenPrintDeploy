@@ -32,9 +32,7 @@ public sealed class ZoneRepository
 
     internal static Zone MapToDomain(ZoneEntity entity)
     {
-        var rules = entity.Rules
-            .Select(r => new ZoneRule(r.GroupSid, r.SubnetCidr, r.OuDn))
-            .ToList();
+        var rules = entity.Rules.Select(r => new ZoneRule(r.GroupSid)).ToList();
         var printerIds = entity.Printers.Select(p => p.Id).ToList();
 
         return new Zone(
@@ -42,7 +40,6 @@ public sealed class ZoneRepository
             Name: entity.Name,
             Priority: entity.Priority,
             Rules: rules,
-            PrinterIds: printerIds,
-            DefaultPrinterId: entity.DefaultPrinterId);
+            PrinterIds: printerIds);
     }
 }

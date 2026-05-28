@@ -7,7 +7,9 @@ public sealed class ZoneRuleEntity
     public Guid ZoneId { get; set; }
     public ZoneEntity? Zone { get; set; }
 
+    /// <summary>
+    /// The group SID that gates this rule. A rule with no group set matches
+    /// nothing — the admin form rejects that shape so it never reaches storage.
+    /// </summary>
     public string? GroupSid { get; set; }
-    public string? SubnetCidr { get; set; }
-    public string? OuDn { get; set; }
 }

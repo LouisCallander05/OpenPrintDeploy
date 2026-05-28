@@ -56,9 +56,72 @@ at build time and can be built on Linux / macOS for dev.
 To run the server locally:
 
 ```sh
+# One-time: enable dev auth + the in-memory Stub directory (no AD required).
+# appsettings.Development.json is gitignored; copy the committed template.
+cp src/OpenPrintDeploy.Server/appsettings.Development.json{.example,}
+
 dotnet run --project src/OpenPrintDeploy.Server
 # → http://localhost:5080/health
 ```
+
+Without `appsettings.Development.json` the server falls back to the production
+defaults (Negotiate auth + LDAP), so `/sync` will 401/500 on a box with no AD.
+
+## Production: domain-joined print server
+
+### Deploy
+
+From this repo on a dev machine with the .NET 8 SDK:
+
+```powershell
+.\scripts\Publish-Server.ps1
+```
+
+This produces a self-contained `win-x64` build in `publish/server/`, with
+`Install-Service.ps1` and `Uninstall-Service.ps1` bundled alongside the exe.
+The target machine doesn't need the .NET 8 hosting bundle installed.
+
+Copy `publish/server/` to the print server. Then either:
+
+- **Right-click `OpenPrintDeploy.Installer.exe` → Run as administrator** (the
+  exe carries a `requireAdministrator` manifest, so UAC prompts automatically).
+  The installer is a small native .NET console app — EDR products that block
+  PowerShell scripts by default (Cylance, etc.) won't reject it.
+- Or, if your environment allows PowerShell, run `.\Install-Service.ps1` from
+  an elevated prompt. Both do exactly the same work.
+
+That registers `OpenPrintDeployServer` as a Windows service (Local SYSTEM,
+autostart), adds a firewall rule on TCP 5080, and starts it. The database
+lives at `C:\ProgramData\OpenPrintDeploy\app.db` and survives reinstalls.
+
+Then from a workstation:
+
+```
+http://<print-server>:5080/admin/directory
+```
+
+Click **Test connection**. If LDAP, DC and search base auto-resolve and the
+bind succeeds, you're done. Logs go to **Event Viewer → Windows Logs →
+Application** (source: `OpenPrintDeployServer`).
+
+To remove:
+
+```cmd
+OpenPrintDeploy.Installer.exe --uninstall                 :: leaves DB + install dir
+OpenPrintDeploy.Installer.exe --uninstall --remove-data   :: also wipes them
+```
+
+### Identity & directory config
+
+- The service runs as **Local SYSTEM** by default — it authenticates to AD as
+  the computer account (`PRINTSRV01$`). No LDAP bind password lives in config.
+  To run as a domain service account instead, set the service's logon identity
+  in services.msc after install.
+- Leave `Directory:Ldap:Server` and `Directory:Ldap:SearchBase` blank — the
+  server discovers a DC and the domain DN via `Domain.GetCurrentDomain()` at
+  first use. Override them if you need to pin a specific DC.
+- Set `Directory:Ldap:AuthMode` to `Basic` (and supply `BindDn`/`BindPassword`)
+  only when the host isn't domain-joined.
 
 ## License
 

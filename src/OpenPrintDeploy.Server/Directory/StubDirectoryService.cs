@@ -4,8 +4,8 @@ namespace OpenPrintDeploy.Server.Directory;
 
 /// <summary>
 /// Config-backed directory for local development — no AD required. Resolves
-/// groups and machine OUs from the <c>Directory:Stub</c> maps so the full sync
-/// pipeline runs on a dev box.
+/// user groups and the admin UI's group catalog from the <c>Directory:Stub</c>
+/// maps so the full sync pipeline runs on a dev box.
 /// </summary>
 public sealed class StubDirectoryService : IDirectoryService
 {
@@ -25,13 +25,42 @@ public sealed class StubDirectoryService : IDirectoryService
         return Task.FromResult(sids);
     }
 
-    public Task<string?> GetMachineOuDnAsync(string machineName, CancellationToken ct = default)
+    public Task<IReadOnlyList<DirectoryGroup>> SearchGroupsAsync(
+        string query, int limit, CancellationToken ct = default)
     {
-        if (string.IsNullOrWhiteSpace(machineName))
+        var trimmed = query?.Trim() ?? string.Empty;
+        IReadOnlyList<DirectoryGroup> groups = _stub.Groups
+            .Where(kvp => trimmed.Length == 0
+                || kvp.Key.Contains(trimmed, StringComparison.OrdinalIgnoreCase))
+            .OrderBy(kvp => kvp.Key, StringComparer.OrdinalIgnoreCase)
+            .Take(Math.Max(0, limit))
+            .Select(kvp => new DirectoryGroup(kvp.Value, kvp.Key))
+            .ToList();
+        return Task.FromResult(groups);
+    }
+
+    public Task<string?> ResolveGroupNameAsync(string sid, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(sid))
         {
             return Task.FromResult<string?>(null);
         }
 
-        return Task.FromResult(_stub.Machines.GetValueOrDefault(machineName.Trim()));
+        string? name = _stub.Groups
+            .FirstOrDefault(kvp => string.Equals(kvp.Value, sid, StringComparison.OrdinalIgnoreCase))
+            .Key;
+        return Task.FromResult<string?>(name);
+    }
+
+    public Task<DirectoryDiagnostics> GetDiagnosticsAsync(CancellationToken ct = default)
+    {
+        return Task.FromResult(new DirectoryDiagnostics(
+            Provider: "Stub",
+            AuthMode: "n/a",
+            Server: null,
+            SearchBase: null,
+            Connected: true,
+            SampleGroupCount: _stub.Groups.Count,
+            Error: null));
     }
 }

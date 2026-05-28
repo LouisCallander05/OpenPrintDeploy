@@ -3,8 +3,10 @@
 @attribute [Authorize(Policy = AuthPolicies.Admin)]
 @using OpenPrintDeploy.Server.Admin
 @using OpenPrintDeploy.Server.Data.Entities
+@using OpenPrintDeploy.Server.Directory
 @inject ZoneService ZoneService
 @inject PrinterService PrinterService
+@inject IDirectoryService Directory
 
 <PageTitle>Zones · OpenPrintDeploy</PageTitle>
 
@@ -38,7 +40,7 @@
                     <div class="col-sm-4 mb-3">
                         <label class="form-label">Priority</label>
                         <InputNumber class="form-control" @bind-Value="_model.Priority" />
-                        <div class="form-text">Higher wins when resolving the default printer.</div>
+                        <div class="form-text">Sort order in this list — does not affect evaluation.</div>
                         <ValidationMessage For="() => _model.Priority" class="text-danger small" />
                     </div>
                 </div>
@@ -46,28 +48,26 @@
                 <fieldset class="mb-3">
                     <legend class="h6">Match rules</legend>
                     <p class="form-text mt-0">
-                        A zone applies if <strong>any</strong> rule matches. Within a rule, every
-                        field you set must match (blank fields are ignored). Note: <strong>Machine
-                        OU</strong> rules only apply to on-prem domain- or hybrid-joined machines —
-                        they never match Entra-joined endpoints (which have no on-prem computer
-                        object), so prefer group or subnet rules for those.
+                        A zone applies if the signed-in user is a member of <strong>any</strong> of
+                        the listed groups. Start typing to pick a directory group by name (its SID is
+                        stored), or paste a raw <code>S-1-5-21-…</code> SID for groups not in the
+                        catalog.
                     </p>
+                    <datalist id="opd-group-options">
+                        @foreach (var group in _groups)
+                        {
+                            <option value="@group.Name"></option>
+                        }
+                    </datalist>
                     @for (var i = 0; i < _model.Rules.Count; i++)
                     {
                         var rule = _model.Rules[i];
                         var index = i;
                         <div class="row g-2 align-items-end mb-2">
-                            <div class="col-md-4">
-                                <label class="form-label small mb-0">Group SID</label>
-                                <InputText class="form-control form-control-sm" @bind-Value="rule.GroupSid" placeholder="S-1-5-21-…" />
-                            </div>
-                            <div class="col-md-3">
-                                <label class="form-label small mb-0">Subnet (CIDR)</label>
-                                <InputText class="form-control form-control-sm" @bind-Value="rule.SubnetCidr" placeholder="10.10.10.0/24" />
-                            </div>
-                            <div class="col-md-4">
-                                <label class="form-label small mb-0">Machine OU</label>
-                                <InputText class="form-control form-control-sm" @bind-Value="rule.OuDn" placeholder="OU=Sales,DC=corp,DC=local" />
+                            <div class="col-md-11">
+                                <label class="form-label small mb-0">Group</label>
+                                <input class="form-control form-control-sm" list="opd-group-options"
+                                       @bind="rule.GroupName" placeholder="@_groupPlaceholder" />
                             </div>
                             <div class="col-md-1">
                                 <button type="button" class="btn btn-sm btn-outline-danger w-100" title="Remove rule"
@@ -102,18 +102,6 @@
                     }
                 </fieldset>
 
-                <div class="mb-3" style="max-width: 24rem;">
-                    <label class="form-label">Default printer</label>
-                    <InputSelect class="form-select" @bind-Value="_model.DefaultPrinterId">
-                        <option value="">(no default)</option>
-                        @foreach (var printer in SelectedPrinters)
-                        {
-                            <option value="@printer.Id">@printer.DisplayName</option>
-                        }
-                    </InputSelect>
-                    <div class="form-text">Only printers assigned to this zone can be the default.</div>
-                </div>
-
                 <button type="submit" class="btn btn-primary" disabled="@_saving">Save</button>
                 <button type="button" class="btn btn-link" @onclick="CancelForm">Cancel</button>
             </EditForm>
@@ -136,9 +124,8 @@ else
             <tr>
                 <th>Name</th>
                 <th>Priority</th>
-                <th>Rules</th>
+                <th>Groups</th>
                 <th>Printers</th>
-                <th>Default</th>
                 <th class="text-end">Actions</th>
             </tr>
         </thead>
@@ -148,9 +135,8 @@ else
                 <tr>
                     <td>@zone.Name</td>
                     <td>@zone.Priority</td>
-                    <td>@DescribeRules(zone)</td>
+                    <td>@DescribeGroups(zone)</td>
                     <td>@zone.Printers.Count</td>
-                    <td>@(DefaultName(zone) ?? "—")</td>
                     <td class="text-end">
                         @if (_deletingId == zone.Id)
                         {
@@ -173,6 +159,10 @@ else
 @code {
     private IReadOnlyList<ZoneEntity>? _zones;
     private IReadOnlyList<PrinterEntity> _allPrinters = [];
+    private IReadOnlyList<DirectoryGroup> _groups = [];
+    private readonly Dictionary<string, string> _nameToSid = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _sidToName = new(StringComparer.OrdinalIgnoreCase);
+    private string _groupPlaceholder = "Start typing a group name…";
     private ZoneInput _model = new();
     private Guid? _editingId;
     private Guid? _deletingId;
@@ -180,15 +170,28 @@ else
     private bool _saving;
     private string? _error;
 
-    private IEnumerable<PrinterEntity> SelectedPrinters =>
-        _allPrinters.Where(p => _model.PrinterIds.Contains(p.Id));
-
     protected override async Task OnInitializedAsync() => await ReloadAsync();
 
     private async Task ReloadAsync()
     {
         _zones = await ZoneService.GetAllAsync();
         _allPrinters = await PrinterService.GetAllAsync();
+        await LoadGroupsAsync();
+    }
+
+    private async Task LoadGroupsAsync()
+    {
+        _groups = await Directory.SearchGroupsAsync(string.Empty, limit: 200);
+        _nameToSid.Clear();
+        _sidToName.Clear();
+        foreach (var group in _groups)
+        {
+            _nameToSid[group.Name] = group.Sid;
+            _sidToName[group.Sid] = group.Name;
+        }
+        _groupPlaceholder = _groups.Count > 0
+            ? "Start typing a group name…"
+            : "Paste a group SID (S-1-5-21-…)";
     }
 
     private void StartCreate()
@@ -215,12 +218,18 @@ else
         {
             Name = zone.Name,
             Priority = zone.Priority,
-            DefaultPrinterId = zone.DefaultPrinterId,
             PrinterIds = zone.Printers.Select(p => p.Id).ToList(),
             Rules = zone.Rules
-                .Select(r => new RuleInput { GroupSid = r.GroupSid, SubnetCidr = r.SubnetCidr, OuDn = r.OuDn })
+                .Select(r => new RuleInput { GroupSid = r.GroupSid })
                 .ToList(),
         };
+        // Show each group rule by name; fall back to the raw SID if unresolvable.
+        foreach (var rule in _model.Rules.Where(r => !string.IsNullOrWhiteSpace(r.GroupSid)))
+        {
+            rule.GroupName = _sidToName.GetValueOrDefault(rule.GroupSid!)
+                ?? await Directory.ResolveGroupNameAsync(rule.GroupSid!)
+                ?? rule.GroupSid;
+        }
         if (_model.Rules.Count == 0)
         {
             _model.Rules.Add(new RuleInput());
@@ -247,10 +256,6 @@ else
         else
         {
             _model.PrinterIds.Remove(printerId);
-            if (_model.DefaultPrinterId == printerId)
-            {
-                _model.DefaultPrinterId = null;
-            }
         }
     }
 
@@ -260,6 +265,11 @@ else
         _error = null;
         try
         {
+            if (!ResolveRuleGroups())
+            {
+                return;
+            }
+
             if (_editingId is { } id)
             {
                 await ZoneService.UpdateAsync(id, _model);
@@ -299,23 +309,47 @@ else
         }
     }
 
-    private static string DescribeRules(ZoneEntity zone)
+    /// <summary>
+    /// Resolves each rule's typed <see cref="RuleInput.GroupName"/> to a stored
+    /// SID (the directory is the source of truth). Accepts an exact group name
+    /// or a pasted raw SID; anything else is a typo we surface rather than
+    /// persist as an unmatchable rule. Returns false (with <see cref="_error"/>
+    /// set) if a name can't be resolved.
+    /// </summary>
+    private bool ResolveRuleGroups()
     {
-        if (zone.Rules.Count == 0)
+        foreach (var rule in _model.Rules)
         {
-            return "—";
+            var typed = rule.GroupName?.Trim();
+            if (string.IsNullOrEmpty(typed))
+            {
+                rule.GroupSid = null;
+            }
+            else if (_nameToSid.TryGetValue(typed, out var sid))
+            {
+                rule.GroupSid = sid;
+            }
+            else if (typed.StartsWith("S-1-", StringComparison.OrdinalIgnoreCase))
+            {
+                rule.GroupSid = typed;
+            }
+            else
+            {
+                _error = $"Unknown group '{typed}'. Pick one from the list, or paste its SID (S-1-5-21-…).";
+                return false;
+            }
         }
 
-        var parts = new List<string>();
-        if (zone.Rules.Any(r => r.GroupSid is not null)) parts.Add("group");
-        if (zone.Rules.Any(r => r.SubnetCidr is not null)) parts.Add("subnet");
-        if (zone.Rules.Any(r => r.OuDn is not null)) parts.Add("OU");
-        var kinds = parts.Count > 0 ? $" ({string.Join(", ", parts)})" : "";
-        return $"{zone.Rules.Count} rule{(zone.Rules.Count == 1 ? "" : "s")}{kinds}";
+        return true;
     }
 
-    private static string? DefaultName(ZoneEntity zone)
-        => zone.DefaultPrinterId is { } id
-            ? zone.Printers.FirstOrDefault(p => p.Id == id)?.DisplayName
-            : null;
+    private string DescribeGroups(ZoneEntity zone)
+    {
+        var names = zone.Rules
+            .Where(r => !string.IsNullOrWhiteSpace(r.GroupSid))
+            .Select(r => _sidToName.GetValueOrDefault(r.GroupSid!, r.GroupSid!))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        return names.Count == 0 ? "—" : string.Join(", ", names);
+    }
 }

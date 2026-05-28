@@ -10,9 +10,6 @@ public sealed class PrinterEntity
     /// <summary>Human-readable name shown in Devices and Printers.</summary>
     public required string DisplayName { get; set; }
 
-    /// <summary>Optional location string (room, building) shown in Windows.</summary>
-    public string? Location { get; set; }
-
     public DateTimeOffset CreatedAt { get; set; } = DateTimeOffset.UtcNow;
 
     public ICollection<ZoneEntity> Zones { get; set; } = new List<ZoneEntity>();

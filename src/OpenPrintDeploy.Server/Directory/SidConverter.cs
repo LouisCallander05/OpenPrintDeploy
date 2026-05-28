@@ -71,4 +71,62 @@ public static class SidConverter
 
         return builder.ToString();
     }
+
+    /// <summary>
+    /// Parses a canonical <c>S-1-5-21-…</c> SID string back to its binary form —
+    /// the inverse of <see cref="ToSidString"/>. Needed to build the
+    /// <c>(objectSid=…)</c> LDAP filter that resolves a SID to a group name.
+    /// </summary>
+    /// <exception cref="FormatException">The string isn't a well-formed SID.</exception>
+    public static byte[] FromSidString(string sid)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(sid);
+
+        var parts = sid.Split('-');
+        // "S", revision, authority, then 0..15 sub-authorities.
+        if (parts.Length < 3
+            || !parts[0].Equals("S", StringComparison.OrdinalIgnoreCase)
+            || !byte.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var revision))
+        {
+            throw new FormatException($"'{sid}' is not a valid SID.");
+        }
+
+        var authorityText = parts[2];
+        var authority = authorityText.StartsWith("0x", StringComparison.OrdinalIgnoreCase)
+            ? ulong.Parse(authorityText[2..], NumberStyles.HexNumber, CultureInfo.InvariantCulture)
+            : ulong.Parse(authorityText, NumberStyles.Integer, CultureInfo.InvariantCulture);
+        if (authority > 0xFFFF_FFFF_FFFFUL)
+        {
+            throw new FormatException($"'{sid}' has an identifier authority that exceeds 48 bits.");
+        }
+
+        var subAuthorityCount = parts.Length - 3;
+        if (subAuthorityCount > byte.MaxValue)
+        {
+            throw new FormatException($"'{sid}' has too many sub-authorities.");
+        }
+
+        var bytes = new byte[8 + (4 * subAuthorityCount)];
+        bytes[0] = revision;
+        bytes[1] = (byte)subAuthorityCount;
+
+        // 48-bit identifier authority, big-endian across bytes 2..7.
+        for (var i = 0; i < 6; i++)
+        {
+            bytes[7 - i] = (byte)(authority & 0xFF);
+            authority >>= 8;
+        }
+
+        for (var i = 0; i < subAuthorityCount; i++)
+        {
+            if (!uint.TryParse(parts[3 + i], NumberStyles.Integer, CultureInfo.InvariantCulture, out var sub))
+            {
+                throw new FormatException($"'{sid}' has a non-numeric sub-authority.");
+            }
+
+            BinaryPrimitives.WriteUInt32LittleEndian(bytes.AsSpan(8 + (4 * i), 4), sub);
+        }
+
+        return bytes;
+    }
 }

@@ -56,4 +56,41 @@ public sealed class SidConverterTests
         byte[] sid = [0x01, 0x02, 0, 0, 0, 0, 0, 0x05, 0x20, 0, 0, 0];
         Assert.Throws<ArgumentException>(() => SidConverter.ToSidString(sid));
     }
+
+    [Theory]
+    [InlineData("S-1-1-0")]
+    [InlineData("S-1-5-32-544")]
+    [InlineData("S-1-5-21-1004198812-1177373571-682114946-512")]
+    public void FromSidString_RoundTripsWithToSidString(string sid)
+    {
+        Assert.Equal(sid, SidConverter.ToSidString(SidConverter.FromSidString(sid)));
+    }
+
+    [Fact]
+    public void FromSidString_ProducesCanonicalBinaryLayout()
+    {
+        byte[] expected =
+        [
+            0x01, 0x02, 0, 0, 0, 0, 0, 0x05,
+            0x20, 0, 0, 0,        // 32, little-endian
+            0x20, 0x02, 0, 0,     // 544, little-endian
+        ];
+        Assert.Equal(expected, SidConverter.FromSidString("S-1-5-32-544"));
+    }
+
+    [Theory]
+    [InlineData("not-a-sid")]
+    [InlineData("S-1")]
+    [InlineData("S-x-5-21")]
+    [InlineData("S-1-5-notanumber")]
+    public void FromSidString_RejectsMalformed(string value)
+    {
+        Assert.Throws<FormatException>(() => SidConverter.FromSidString(value));
+    }
+
+    [Fact]
+    public void FromSidString_RejectsBlank()
+    {
+        Assert.Throws<ArgumentException>(() => SidConverter.FromSidString(""));
+    }
 }
