@@ -29,7 +29,7 @@ jobs:
           dotnet-version: 8.0.x
 
       - name: Build + test
-        run: dotnet test OpenPrintDeploy.sln -c Release --nologo
+        run: dotnet test OpenPrintDeploy.sln -c Release -p:NuGetAudit=true --nologo
 
       - name: Publish server + installer
         run: .\scripts\Publish-Server.ps1

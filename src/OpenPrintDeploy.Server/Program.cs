@@ -15,16 +15,21 @@ var builder = WebApplication.CreateBuilder(args);
 // service (production). No-op when not actually running as a service.
 builder.Host.UseWindowsService(o => o.ServiceName = "OpenPrintDeployServer");
 
-var connectionString = builder.Configuration.GetConnectionString("AppDb")
-    ?? DefaultConnectionString(builder.Environment);
-
 // A context factory backs both the long-lived Blazor admin circuits
 // (context-per-operation) and a scoped shim for the request-scoped sync path.
-builder.Services.AddDbContextFactory<AppDbContext>(options =>
-    options.UseSqlite(connectionString, sqlite =>
+// Connection string is resolved through the DI-built IConfiguration so test
+// hosts (WebApplicationFactory) can override it via in-memory sources that
+// only become visible after the host is built.
+builder.Services.AddDbContextFactory<AppDbContext>((sp, options) =>
+{
+    var cfg = sp.GetRequiredService<IConfiguration>();
+    var env = sp.GetRequiredService<IHostEnvironment>();
+    var cs = cfg.GetConnectionString("AppDb") ?? DefaultConnectionString(env);
+    options.UseSqlite(cs, sqlite =>
         // Zones Include both Rules and Printers; split queries avoid the
         // cartesian row explosion of loading two collections in one query.
-        sqlite.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery)));
+        sqlite.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery));
+});
 builder.Services.AddScoped(sp =>
     sp.GetRequiredService<IDbContextFactory<AppDbContext>>().CreateDbContext());
 
@@ -47,20 +52,22 @@ else
     builder.Services.AddSingleton<IPrintSpoolerService, StubPrintSpoolerService>();
 }
 
-// Directory provider (group + OU resolution), chosen by config.
+// Directory provider (group resolution) — Development uses the in-memory Stub
+// so tests/dev never reach for AD; Production uses LDAP against the joined
+// domain. Same reasoning as auth: env is stable at startup, an Auth:Mode-style
+// config read is not.
 builder.Services.Configure<DirectoryOptions>(
     builder.Configuration.GetSection(DirectoryOptions.SectionName));
-var directoryProvider = builder.Configuration[$"{DirectoryOptions.SectionName}:Provider"] ?? "Stub";
-if (directoryProvider.Equals("Ldap", StringComparison.OrdinalIgnoreCase))
-{
-    builder.Services.AddSingleton<IDirectoryService, LdapDirectoryService>();
-}
-else
+if (builder.Environment.IsDevelopment())
 {
     builder.Services.AddSingleton<IDirectoryService, StubDirectoryService>();
 }
+else
+{
+    builder.Services.AddSingleton<IDirectoryService, LdapDirectoryService>();
+}
 
-builder.Services.AddAppAuthentication(builder.Configuration);
+builder.Services.AddAppAuthentication(builder.Configuration, builder.Environment);
 
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();

@@ -84,19 +84,17 @@ public sealed class SyncEndpointTests : IClassFixture<SyncEndpointTests.TestServ
 
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
+            // UseEnvironment("Development") drives both the dev auth handler and
+            // the Stub directory (the production code keys those choices off
+            // IHostEnvironment, not config). What we still need to set is the
+            // dev-handler default user, the Stub user→SID map matching the
+            // seeded zones, and an isolated SQLite file for hermetic tests.
             builder.UseEnvironment("Development");
-
-            // Tests must own their config rather than depend on a developer's
-            // (gitignored) appsettings.Development.json. Pin the dev auth handler,
-            // the in-memory Stub directory mapped to the seeded zone SIDs, and an
-            // isolated SQLite file so the run is hermetic on any machine.
             builder.ConfigureAppConfiguration((_, config) =>
                 config.AddInMemoryCollection(new Dictionary<string, string?>
                 {
                     ["ConnectionStrings:AppDb"] = $"Data Source={_dbPath}",
-                    ["Auth:Mode"] = "Dev",
                     ["Auth:Dev:DefaultUser"] = "hruser",
-                    ["Directory:Provider"] = "Stub",
                     ["Directory:Stub:Users:hruser:0"] = "S-1-5-21-DEMO-HR",
                     ["Directory:Stub:Users:enguser:0"] = "S-1-5-21-DEMO-ENG",
                 }));

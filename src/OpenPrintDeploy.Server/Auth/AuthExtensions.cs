@@ -7,19 +7,22 @@ namespace OpenPrintDeploy.Server.Auth;
 public static class AuthExtensions
 {
     /// <summary>
-    /// Registers authentication + the Admin authorization policy. The scheme is
-    /// chosen by <c>Auth:Mode</c>: <c>Negotiate</c> (production) or <c>Dev</c>
-    /// (the header-based dev handler). Negotiate is never registered in Dev mode,
-    /// so a dev box without Kerberos never constructs that handler.
+    /// Registers authentication + the Admin authorization policy. The scheme
+    /// is chosen by <see cref="IHostEnvironment.IsDevelopment"/> — Negotiate in
+    /// production (the real AD path), the header-based Dev handler in
+    /// development. We deliberately don't drive this off an <c>Auth:Mode</c>
+    /// config knob: that read would happen before WebApplicationFactory's
+    /// in-memory overrides apply, and registering Negotiate alongside it
+    /// crashes the TestServer (no <c>IConnectionItemsFeature</c>).
     /// </summary>
     public static IServiceCollection AddAppAuthentication(
-        this IServiceCollection services, IConfiguration configuration)
+        this IServiceCollection services,
+        IConfiguration configuration,
+        IHostEnvironment env)
     {
         services.Configure<AuthOptions>(configuration.GetSection(AuthOptions.SectionName));
 
-        var mode = configuration[$"{AuthOptions.SectionName}:Mode"] ?? "Negotiate";
-
-        if (mode.Equals(DevAuthenticationHandler.SchemeName, StringComparison.OrdinalIgnoreCase))
+        if (env.IsDevelopment())
         {
             services.AddAuthentication(DevAuthenticationHandler.SchemeName)
                 .AddScheme<AuthenticationSchemeOptions, DevAuthenticationHandler>(

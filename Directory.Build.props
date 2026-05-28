@@ -6,6 +6,11 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <!-- Audit fetches vulnerability data from nuget.org during restore. A
+         transient or offline lookup otherwise becomes a fatal error under
+         TreatWarningsAsErrors. CI overrides this to true via `-p:NuGetAudit=true`
+         on runners that have network. -->
+    <NuGetAudit>false</NuGetAudit>
     <AnalysisLevel>latest</AnalysisLevel>
     <NeutralLanguage>en-US</NeutralLanguage>
     <Company>OpenPrintDeploy</Company>
