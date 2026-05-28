@@ -67,7 +67,9 @@
                             <div class="col-md-11">
                                 <label class="form-label small mb-0">Group</label>
                                 <input class="form-control form-control-sm" list="opd-group-options"
-                                       @bind="rule.GroupName" placeholder="@_groupPlaceholder" />
+                                       value="@rule.GroupName"
+                                       @oninput="e => OnGroupInputAsync(rule, e)"
+                                       placeholder="@_groupPlaceholder" />
                             </div>
                             <div class="col-md-1">
                                 <button type="button" class="btn btn-sm btn-outline-danger w-100" title="Remove rule"
@@ -181,17 +183,62 @@ else
 
     private async Task LoadGroupsAsync()
     {
+        // Initial seed: a first slice for the empty datalist and to know whether
+        // the directory is reachable at all. SearchGroupsAsync gets re-called
+        // per-keystroke from OnGroupInputAsync to widen the catalog as the
+        // admin types — large directories never fit in a single fetch.
         _groups = await Directory.SearchGroupsAsync(string.Empty, limit: 200);
-        _nameToSid.Clear();
-        _sidToName.Clear();
-        foreach (var group in _groups)
+        AccumulateGroups(_groups);
+        _groupPlaceholder = _groups.Count > 0
+            ? "Start typing a group name…"
+            : "Paste a group SID (S-1-5-21-…)";
+    }
+
+    private void AccumulateGroups(IEnumerable<DirectoryGroup> groups)
+    {
+        foreach (var group in groups)
         {
             _nameToSid[group.Name] = group.Sid;
             _sidToName[group.Sid] = group.Name;
         }
-        _groupPlaceholder = _groups.Count > 0
-            ? "Start typing a group name…"
-            : "Paste a group SID (S-1-5-21-…)";
+    }
+
+    private CancellationTokenSource? _groupSearchCts;
+
+    /// <summary>
+    /// Per-keystroke typeahead: replaces the datalist with whatever the
+    /// directory returns for the typed substring, debounced ~250ms so we
+    /// don't fire one LDAP query per character. Maps accumulate across
+    /// searches so a name picked-then-replaced-by-another-search still
+    /// resolves at save time.
+    /// </summary>
+    private async Task OnGroupInputAsync(RuleInput rule, ChangeEventArgs e)
+    {
+        var typed = e.Value?.ToString() ?? string.Empty;
+        rule.GroupName = typed;
+
+        _groupSearchCts?.Cancel();
+        _groupSearchCts = new CancellationTokenSource();
+        var token = _groupSearchCts.Token;
+
+        try
+        {
+            await Task.Delay(250, token);
+        }
+        catch (TaskCanceledException)
+        {
+            return;
+        }
+
+        var results = await Directory.SearchGroupsAsync(typed.Trim(), limit: 200, token);
+        if (token.IsCancellationRequested)
+        {
+            return;
+        }
+
+        _groups = results;
+        AccumulateGroups(results);
+        StateHasChanged();
     }
 
     private void StartCreate()
@@ -265,7 +312,7 @@ else
         _error = null;
         try
         {
-            if (!ResolveRuleGroups())
+            if (!await ResolveRuleGroupsAsync())
             {
                 return;
             }
@@ -311,12 +358,14 @@ else
 
     /// <summary>
     /// Resolves each rule's typed <see cref="RuleInput.GroupName"/> to a stored
-    /// SID (the directory is the source of truth). Accepts an exact group name
-    /// or a pasted raw SID; anything else is a typo we surface rather than
-    /// persist as an unmatchable rule. Returns false (with <see cref="_error"/>
-    /// set) if a name can't be resolved.
+    /// SID (the directory is the source of truth). The local catalog map only
+    /// contains groups the admin has seen via the typeahead in this session;
+    /// if a typed name isn't there (e.g. selected earlier, then the suggestion
+    /// list moved on), we re-query the directory rather than reject as typo.
+    /// Returns false (with <see cref="_error"/> set) if a name truly doesn't
+    /// resolve.
     /// </summary>
-    private bool ResolveRuleGroups()
+    private async Task<bool> ResolveRuleGroupsAsync()
     {
         foreach (var rule in _model.Rules)
         {
@@ -324,20 +373,33 @@ else
             if (string.IsNullOrEmpty(typed))
             {
                 rule.GroupSid = null;
+                continue;
             }
-            else if (_nameToSid.TryGetValue(typed, out var sid))
+            if (_nameToSid.TryGetValue(typed, out var sid))
             {
                 rule.GroupSid = sid;
+                continue;
             }
-            else if (typed.StartsWith("S-1-", StringComparison.OrdinalIgnoreCase))
+            if (typed.StartsWith("S-1-", StringComparison.OrdinalIgnoreCase))
             {
                 rule.GroupSid = typed;
+                continue;
             }
-            else
+
+            // Last chance: ask the directory now. Catches the case where the
+            // typeahead suggestion list was overwritten between selection and
+            // save.
+            var found = await Directory.SearchGroupsAsync(typed, limit: 5);
+            var match = found.FirstOrDefault(g => string.Equals(g.Name, typed, StringComparison.OrdinalIgnoreCase));
+            if (match is not null)
             {
-                _error = $"Unknown group '{typed}'. Pick one from the list, or paste its SID (S-1-5-21-…).";
-                return false;
+                AccumulateGroups([match]);
+                rule.GroupSid = match.Sid;
+                continue;
             }
+
+            _error = $"Unknown group '{typed}'. Pick one from the list, or paste its SID (S-1-5-21-…).";
+            return false;
         }
 
         return true;
