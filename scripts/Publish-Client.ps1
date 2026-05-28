@@ -83,6 +83,22 @@ $installerExe = Join-Path $resolvedOut "OpenPrintDeploy.Client.Installer.exe"
 if (-not (Test-Path $trayExe))      { throw "Tray exe missing from publish folder." }
 if (-not (Test-Path $installerExe)) { throw "Client installer exe missing from publish folder." }
 
+# Catch a class of silently-broken self-contained WPF publishes. If the build
+# config ever drops the WindowsDesktop runtime pack from deps.json again, the
+# tray would launch on a dev box (where the runtime is installed system-wide)
+# but crash with FileNotFoundException for WindowsBase on a clean endpoint.
+# Better to fail the publish here than to ship that to Intune.
+$depsJsonPath = Join-Path $resolvedOut "OpenPrintDeploy.Client.Tray.deps.json"
+if (-not (Test-Path $depsJsonPath)) { throw "deps.json missing from tray publish -- did the publish silently fail?" }
+$depsRaw = Get-Content $depsJsonPath -Raw
+if ($depsRaw -notmatch 'runtimepack\.Microsoft\.WindowsDesktop\.App\.Runtime') {
+    throw ("Self-contained publish is missing the WindowsDesktop runtime pack in deps.json. " +
+           "Check EnableWindowsTargeting in OpenPrintDeploy.Client.Tray.csproj -- it must NOT be set on Windows.")
+}
+if ($depsRaw -notmatch 'WindowsBase\.dll') {
+    throw "Self-contained publish does not register WindowsBase.dll in deps.json. The bundle will crash on clean machines."
+}
+
 Write-Host ""
 Write-Host "Publish complete:" -ForegroundColor Green
 Write-Host "  $resolvedOut"

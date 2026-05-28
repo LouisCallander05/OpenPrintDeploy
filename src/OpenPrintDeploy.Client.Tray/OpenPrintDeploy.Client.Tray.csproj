@@ -11,8 +11,12 @@
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <!-- Lets the project compile-check on non-Windows dev/CI; it still only
-         runs on Windows. -->
-    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+         runs on Windows. Must be off on Windows publish — when set, the
+         self-contained publish silently drops the Microsoft.WindowsDesktop.App
+         runtime pack from deps.json. The WPF DLLs end up on disk but aren't
+         registered as TPA assets, and the tray crashes at startup with
+         "Could not load file or assembly 'WindowsBase'". -->
+    <EnableWindowsTargeting Condition="'$(OS)' != 'Windows_NT'">true</EnableWindowsTargeting>
     <!-- CI passes -p:Version=<git-tag-stripped> on tag builds (see release.yml). -->
     <Version Condition="'$(Version)' == ''">0.0.0-dev</Version>
   </PropertyGroup>
