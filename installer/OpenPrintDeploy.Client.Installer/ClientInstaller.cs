@@ -49,6 +49,14 @@ internal static class ClientInstaller
         EnsureDirectory(InstallDir);
         CopyDirectory(sourceDir, InstallDir);
 
+        // Files extracted from a zip downloaded from the internet carry the
+        // Mark-of-the-Web (a Zone.Identifier alternate data stream). The .NET
+        // runtime's assembly loader honours that for self-contained WPF
+        // dependencies — load fails with FileNotFoundException for things
+        // like WindowsBase.dll. Strip the ADS off everything we just copied.
+        Log("Stripping Mark-of-the-Web from installed files...");
+        UnblockDirectory(InstallDir);
+
         var installedExe = Path.Combine(InstallDir, TrayExeName);
         WriteAppSettings(installedExe, serverUrl);
 
@@ -137,10 +145,18 @@ internal static class ClientInstaller
             }
             server["BaseAddress"] = serverUrl;
         }
-        else if (server["BaseAddress"] is null)
+        else
         {
-            throw new InvalidOperationException(
-                "First-time install: pass --server <url> (e.g. --server http://printsrv01.corp.local:5080).");
+            // Existing BaseAddress is either missing OR an empty string (the
+            // shipped default) — either way, the operator needs to supply one.
+            // Without this guard, the installer happily preserved the empty
+            // value from the published file and the tray crashed at first run.
+            var existing = server["BaseAddress"]?.GetValue<string>();
+            if (string.IsNullOrWhiteSpace(existing))
+            {
+                throw new InvalidOperationException(
+                    "First-time install: pass --server <url> (e.g. --server http://printsrv01.corp.local:5080).");
+            }
         }
 
         server["SyncIntervalMinutes"] ??= 60;
@@ -226,6 +242,33 @@ internal static class ClientInstaller
             var rel = Path.GetRelativePath(source, file);
             var target = Path.Combine(destination, rel);
             File.Copy(file, target, overwrite: true);
+        }
+    }
+
+    /// <summary>
+    /// Deletes the <c>:Zone.Identifier</c> alternate data stream from every
+    /// file in <paramref name="root"/>. That's the NTFS mechanism Windows uses
+    /// to flag a file as "downloaded from the internet" (Mark-of-the-Web);
+    /// it's what makes the .NET assembly loader refuse to load WPF runtime
+    /// DLLs in a self-contained tray app when those DLLs came out of a
+    /// zipped GitHub release.
+    /// </summary>
+    private static void UnblockDirectory(string root)
+    {
+        foreach (var file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
+        {
+            try
+            {
+                // The NTFS ADS path syntax — File.Delete passes it through
+                // to the Win32 DeleteFile, which removes just the stream.
+                File.Delete(file + ":Zone.Identifier");
+            }
+            catch
+            {
+                // No ADS on this file, file locked, or filesystem isn't NTFS.
+                // Best-effort — if MOTW survives somewhere, the user can
+                // still Unblock-File manually.
+            }
         }
     }
 
