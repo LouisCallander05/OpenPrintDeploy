@@ -146,7 +146,25 @@ for non-technical deployers and for Intune — name once, run anywhere.
 The installer extracts binaries to `C:\Program Files\OpenPrintDeploy\Tray\`,
 writes `appsettings.json` with the server URL, and registers the Run-key
 auto-start. The tray will launch at next user logon; right-click its system
-tray icon to see "Sync now", the configured server, and the version.
+tray icon to see "Sync now", "Sign in…", the configured server, and the version.
+
+### Non-domain-joined machines (sign in with a domain account)
+
+Integrated auth (Kerberos/NTLM as the signed-in user) only works when the
+machine is joined to the AD domain or to Entra. On a standalone (workgroup)
+laptop the logged-in user has no domain identity, so `/sync` would be rejected.
+
+The tray detects this (via `dsregcmd /status`): when the device is **not**
+domain- or Entra-joined, it prompts for a domain account (`DOMAIN\user` or
+`user@domain`) and authenticates with those credentials instead — SSPI uses NTLM
+with the supplied account, and the domain-joined server validates it against a
+domain controller. The same prompt appears as a fallback if integrated auth is
+ever rejected with a 401, and on demand via the **"Sign in…"** tray item.
+
+Credentials are saved in the **Windows Credential Manager** (per user, under
+target `OpenPrintDeploy:<server-host>`), so the prompt appears only once until
+the password changes. No server configuration is required — the server's
+existing Negotiate authentication already accepts these credentials.
 
 To uninstall:
 

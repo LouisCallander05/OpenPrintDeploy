@@ -32,10 +32,20 @@ public partial class App : Application
             return;
         }
 
-        _coordinator = new SyncCoordinator(settings);
+        // The prompt must run on the UI (STA) thread; the authenticator may call
+        // it from a background continuation during a sync, so marshal explicitly.
+        var authenticator = new TrayAuthenticator(
+            settings.ServerBaseAddress,
+            ctx => Dispatcher.Invoke(() => CredentialPrompt.Show(ctx)));
+        _coordinator = new SyncCoordinator(authenticator);
 
         var menu = new Forms.ContextMenuStrip();
         menu.Items.Add("Sync now", null, async (_, _) => await SyncAsync());
+        menu.Items.Add("Sign in…", null, async (_, _) =>
+        {
+            _coordinator?.SignIn();
+            await SyncAsync();
+        });
         menu.Items.Add(new Forms.ToolStripSeparator());
         menu.Items.Add($"Server: {settings.ServerBaseAddress}") .Enabled = false;
         menu.Items.Add($"Version: {GetVersion()}").Enabled = false;

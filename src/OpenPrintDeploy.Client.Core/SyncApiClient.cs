@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Http.Json;
 using OpenPrintDeploy.Shared.Sync;
 
@@ -33,6 +34,23 @@ public sealed class SyncApiClient
     public static HttpClient CreateDefaultCredentialsClient(Uri baseAddress)
     {
         var handler = new HttpClientHandler { UseDefaultCredentials = true };
+        return new HttpClient(handler) { BaseAddress = baseAddress };
+    }
+
+    /// <summary>
+    /// Builds an <see cref="HttpClient"/> that authenticates with an explicit
+    /// domain account instead of the signed-in user. This is the non-domain-joined
+    /// path: SSPI has no Kerberos ticket for the supplied account, so Negotiate
+    /// falls back to NTLM with these credentials, and the (domain-joined) server
+    /// validates the NTLM response against a domain controller. The credential's
+    /// <c>UserName</c> should be <c>DOMAIN\user</c> or <c>user@domain</c>.
+    /// </summary>
+    public static HttpClient CreateExplicitCredentialsClient(Uri baseAddress, NetworkCredential credential)
+    {
+        // Scope the credential to this server + Negotiate so it's never offered
+        // anywhere else, and so a default-credentials handler isn't used instead.
+        var cache = new CredentialCache { { baseAddress, "Negotiate", credential } };
+        var handler = new HttpClientHandler { Credentials = cache };
         return new HttpClient(handler) { BaseAddress = baseAddress };
     }
 }

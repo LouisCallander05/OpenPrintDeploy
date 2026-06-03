@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Http;
 using OpenPrintDeploy.Client.Core;
 
@@ -12,34 +13,60 @@ public readonly record struct SyncOutcome(bool Ok, int PrinterCount, string? Err
 }
 
 /// <summary>
-/// Owns the HTTP client (authenticating as the signed-in user) and runs one
-/// sync cycle on demand. Failures are caught and returned, never thrown, so the
-/// caller can notify the user and keep installed printers in place when the
-/// server or a domain controller is unreachable.
+/// Owns the HTTP client and runs one sync cycle on demand. The client's
+/// authentication (signed-in user vs explicit domain credentials) is decided by
+/// <see cref="TrayAuthenticator"/>. Failures are caught and returned, never
+/// thrown, so the caller can notify the user and keep installed printers in
+/// place when the server or a domain controller is unreachable. A 401 triggers a
+/// one-shot re-auth with explicit domain credentials.
 /// </summary>
 public sealed class SyncCoordinator : IDisposable
 {
-    private readonly HttpClient _http;
-    private readonly SyncOrchestrator _orchestrator;
+    private readonly TrayAuthenticator _auth;
     private readonly ManagedStateStore _state;
     private readonly string _machineName;
 
-    public SyncCoordinator(TraySettings settings)
+    private HttpClient? _http;
+    private SyncOrchestrator? _orchestrator;
+
+    public SyncCoordinator(TrayAuthenticator auth)
     {
-        _http = SyncApiClient.CreateDefaultCredentialsClient(settings.ServerBaseAddress);
-        _orchestrator = new SyncOrchestrator(new SyncApiClient(_http), new WindowsPrinterApplier());
+        _auth = auth;
         _state = new ManagedStateStore();
         _machineName = Environment.MachineName;
     }
 
     public async Task<SyncOutcome> RunOnceAsync(CancellationToken ct = default)
     {
+        if (!EnsureClient())
+        {
+            return SyncOutcome.Failure("Sign-in required — open the tray menu and choose “Sign in…”.");
+        }
+
         try
         {
-            var managed = _state.Load();
-            var updated = await _orchestrator.SyncOnceAsync(_machineName, managed, ct);
-            _state.Save(updated);
-            return SyncOutcome.Success(updated.Count);
+            return await SyncWithCurrentClientAsync(ct);
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.Unauthorized)
+        {
+            // Integrated auth (or the stored credentials) was rejected. Offer a
+            // sign-in and retry once with explicit domain credentials.
+            var refreshed = _auth.ReAuthenticate(
+                "The server rejected the current credentials. Enter a domain account.");
+            if (refreshed is null)
+            {
+                return SyncOutcome.Failure("Sign-in required — the server rejected the current credentials.");
+            }
+
+            SwapClient(refreshed);
+            try
+            {
+                return await SyncWithCurrentClientAsync(ct);
+            }
+            catch (Exception retryEx) when (retryEx is not OperationCanceledException)
+            {
+                return SyncOutcome.Failure(retryEx.Message);
+            }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -47,5 +74,48 @@ public sealed class SyncCoordinator : IDisposable
         }
     }
 
-    public void Dispose() => _http.Dispose();
+    /// <summary>Manual "Sign in…" tray action: prompt and switch to those credentials.</summary>
+    public void SignIn()
+    {
+        var client = _auth.SignInInteractive();
+        if (client is not null)
+        {
+            SwapClient(client);
+        }
+    }
+
+    private async Task<SyncOutcome> SyncWithCurrentClientAsync(CancellationToken ct)
+    {
+        var managed = _state.Load();
+        var updated = await _orchestrator!.SyncOnceAsync(_machineName, managed, ct);
+        _state.Save(updated);
+        return SyncOutcome.Success(updated.Count);
+    }
+
+    private bool EnsureClient()
+    {
+        if (_orchestrator is not null)
+        {
+            return true;
+        }
+
+        var client = _auth.CreateClient();
+        if (client is null)
+        {
+            return false;
+        }
+
+        _http = client;
+        _orchestrator = new SyncOrchestrator(new SyncApiClient(_http), new WindowsPrinterApplier());
+        return true;
+    }
+
+    private void SwapClient(HttpClient client)
+    {
+        _http?.Dispose();
+        _http = client;
+        _orchestrator = new SyncOrchestrator(new SyncApiClient(_http), new WindowsPrinterApplier());
+    }
+
+    public void Dispose() => _http?.Dispose();
 }
