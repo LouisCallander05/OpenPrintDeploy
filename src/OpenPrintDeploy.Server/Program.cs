@@ -105,13 +105,12 @@ app.MapPost("/sync", async (
     HttpContext http,
     CancellationToken ct) =>
 {
-    var username = http.User.Identity?.Name;
-    if (string.IsNullOrWhiteSpace(username))
+    if (http.User.Identity?.IsAuthenticated != true)
     {
         return Results.Unauthorized();
     }
 
-    var response = await handler.HandleAsync(username, request.MachineName, ct);
+    var response = await handler.HandleAsync(http.User, request.MachineName, ct);
     return Results.Ok(response);
 })
 .RequireAuthorization()

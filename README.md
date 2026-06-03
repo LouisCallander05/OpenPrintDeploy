@@ -221,6 +221,15 @@ Suggested detection rule (Registry):
   first use. Override them if you need to pin a specific DC.
 - Set `Directory:Ldap:AuthMode` to `Basic` (and supply `BindDn`/`BindPassword`)
   only when the host isn't domain-joined.
+- **Multiple domains / trusts.** Zone matching uses the group SIDs in the user's
+  authenticated Kerberos/NTLM token, which already span every trusted domain. So
+  a server joined to one domain (e.g. students) correctly resolves users from a
+  trusted domain (e.g. staff) — no multi-domain LDAP config needed. The LDAP
+  settings only drive the admin group *picker* and SID→name labels, which see the
+  server's own domain; for a group in another domain, paste its SID into the zone
+  rule (find it via **Directory → Check my access** signed in as that user). The
+  directory lookup is only a fallback for identities whose token carries no
+  groups (e.g. the dev header auth).
 
 ## License
 

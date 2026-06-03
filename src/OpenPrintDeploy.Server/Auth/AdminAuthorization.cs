@@ -39,13 +39,21 @@ public sealed class AdminAuthorizationHandler : AuthorizationHandler<AdminRequir
             return;
         }
 
-        var username = context.User.Identity.Name;
-        if (string.IsNullOrEmpty(username))
+        // Prefer the authenticated token's group SIDs (cross-domain, no LDAP);
+        // fall back to a directory lookup only when the token carries none (the
+        // dev header-auth path).
+        var sids = PrincipalGroups.FromPrincipal(context.User);
+        if (sids.Count == 0)
         {
-            return;
+            var username = context.User.Identity.Name;
+            if (string.IsNullOrEmpty(username))
+            {
+                return;
+            }
+
+            sids = await _directory.GetGroupSidsAsync(username);
         }
 
-        var sids = await _directory.GetGroupSidsAsync(username);
         if (sids.Overlaps(_adminSids))
         {
             context.Succeed(requirement);

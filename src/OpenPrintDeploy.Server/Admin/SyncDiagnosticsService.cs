@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using OpenPrintDeploy.Server.Directory;
 using OpenPrintDeploy.Shared.Sync;
 
@@ -22,13 +23,37 @@ public sealed class SyncDiagnosticsService
         _directory = directory;
     }
 
+    /// <summary>
+    /// Diagnose by username via a directory (LDAP) lookup. This only sees the
+    /// server's own domain, so for a user in another trusted domain it can
+    /// report no groups even though their sync works — prefer
+    /// <see cref="PreviewAsync(ClaimsPrincipal, CancellationToken)"/> when you
+    /// have the live principal.
+    /// </summary>
     public async Task<SyncDiagnostics> PreviewAsync(string username, CancellationToken ct = default)
     {
         var account = DirectoryUsername.Normalize(username);
 
-        // Same call the real sync makes — so a failure here reproduces the bug.
+        // Same call the real sync's fallback makes.
         var groupSids = await _directory.GetGroupSidsAsync(username, ct);
+        return await BuildAsync(account, groupSids, ct);
+    }
 
+    /// <summary>
+    /// Diagnose the signed-in user from their authenticated token — exactly what
+    /// <c>/sync</c> now matches on, so it reflects cross-domain membership the
+    /// directory lookup can't see.
+    /// </summary>
+    public async Task<SyncDiagnostics> PreviewAsync(ClaimsPrincipal user, CancellationToken ct = default)
+    {
+        var account = DirectoryUsername.Normalize(user.Identity?.Name ?? string.Empty);
+        var groupSids = PrincipalGroups.FromPrincipal(user);
+        return await BuildAsync(account, groupSids, ct);
+    }
+
+    private async Task<SyncDiagnostics> BuildAsync(
+        string account, IReadOnlySet<string> groupSids, CancellationToken ct)
+    {
         var groups = new List<ResolvedGroup>(groupSids.Count);
         foreach (var sid in groupSids.OrderBy(s => s, StringComparer.Ordinal))
         {

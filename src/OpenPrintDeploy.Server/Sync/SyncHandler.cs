@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using Microsoft.EntityFrameworkCore;
 using OpenPrintDeploy.Server.Data;
 using OpenPrintDeploy.Server.Directory;
@@ -32,14 +33,24 @@ public sealed class SyncHandler
     }
 
     public async Task<SyncResponseDto> HandleAsync(
-        string username,
+        ClaimsPrincipal user,
         string? machineName,
         CancellationToken ct)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(username);
+        var username = user.Identity?.Name ?? "(unknown)";
 
-        // Group membership comes from the directory, never the client.
-        var groupSids = await _directory.GetGroupSidsAsync(username, ct);
+        // Prefer the group SIDs in the authenticated token (the Kerberos/NTLM
+        // PAC). They already include the user's groups across every trusted
+        // domain — the whole point when the server is joined to one domain but
+        // users live in another. Fall back to a directory lookup only when the
+        // token carries no groups (the dev header-auth path, which has none).
+        var groupSids = PrincipalGroups.FromPrincipal(user);
+        var source = "token";
+        if (groupSids.Count == 0)
+        {
+            groupSids = await _directory.GetGroupSidsAsync(username, ct);
+            source = "directory";
+        }
 
         var context = new EvaluationContext(groupSids);
         var zones = await _zones.LoadAllAsync(ct);
@@ -48,8 +59,8 @@ public sealed class SyncHandler
         if (result.PrinterIds.Count == 0)
         {
             _logger.LogInformation(
-                "Sync for {User} on {Machine}: no matching zones (groups={GroupCount})",
-                username, machineName ?? "(unknown)", groupSids.Count);
+                "Sync for {User} on {Machine}: no matching zones (groups={GroupCount}, source={Source})",
+                username, machineName ?? "(unknown)", groupSids.Count, source);
             return new SyncResponseDto([]);
         }
 
