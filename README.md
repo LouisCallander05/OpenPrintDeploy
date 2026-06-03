@@ -116,20 +116,34 @@ OpenPrintDeploy.Installer.exe --uninstall --remove-data   :: also wipes them
 
 ## Endpoints: the tray client
 
-Each tag-push release also publishes a client artifact
-(`OpenPrintDeploy-client-win-x64.zip`) containing the tray exe and a matching
-installer. The tray is per-machine installed and auto-starts in every user's
-session via an `HKLM\…\Run` key; it authenticates to the server as the
-signed-in user via Kerberos, calls `/sync`, and applies the resolved printers
-to the user's per-user (HKCU) connection list.
+The client ships as a **single self-extracting installer exe** — one file that
+carries the tray (and its runtime) inside it. The tray is per-machine installed
+and auto-starts in every user's session via an `HKLM\…\Run` key; it
+authenticates to the server as the signed-in user via Kerberos, calls `/sync`,
+and applies the resolved printers to the user's per-user (HKCU) connection list.
 
-Manual install on a single workstation (admin PowerShell):
+**Download it straight from the server.** On the admin dashboard, click
+**Download client installer** (or `GET /download/client`). The server hands back
+the installer already named for itself — `OpenPrintDeploy - <host>.exe` — so the
+file is pre-configured for that server with nothing to type. (The tag-push
+release also publishes the bare installer as `OpenPrintDeploy-client-win-x64.zip`.)
+
+Install on a single workstation — any of:
 
 ```cmd
+:: 1. Just run the downloaded "OpenPrintDeploy - <host>.exe" (double-click -> UAC).
+::    It reads <host> from its own filename and configures http://<host>:5080.
+
+:: 2. Or pass the server explicitly (overrides the filename):
 OpenPrintDeploy.Client.Installer.exe install --server http://printsrv01.corp.local:5080
 ```
 
-The installer drops binaries in `C:\Program Files\OpenPrintDeploy\Tray\`,
+**Filename-based config:** a file named `OpenPrintDeploy - <host>.exe` configures
+`http://<host>:5080`. Filenames can't carry a scheme or port, so `http` and port
+`5080` are applied automatically; pass `--server` to override. This is the path
+for non-technical deployers and for Intune — name once, run anywhere.
+
+The installer extracts binaries to `C:\Program Files\OpenPrintDeploy\Tray\`,
 writes `appsettings.json` with the server URL, and registers the Run-key
 auto-start. The tray will launch at next user logon; right-click its system
 tray icon to see "Sync now", the configured server, and the version.
@@ -143,14 +157,22 @@ OpenPrintDeploy.Client.Installer.exe uninstall --remove-data  :: wipes installer
 
 ### Intune deployment
 
-For fleet rollout, wrap the published folder with Microsoft's
-[IntuneWinAppUtil][intunewin] and upload as a Win32 app:
+For fleet rollout, download the pre-named installer from the server (or grab the
+release exe), drop that one file in a folder, and wrap it with Microsoft's
+[IntuneWinAppUtil][intunewin] as a Win32 app:
 
 ```cmd
-IntuneWinAppUtil.exe -c <publish\client> -s OpenPrintDeploy.Client.Installer.exe -o <out>
+IntuneWinAppUtil.exe -c <folder-with-the-exe> -s "OpenPrintDeploy - printsrv01.corp.local.exe" -o <out>
 ```
 
-Intune install command:
+Intune install command — if you used the server's pre-named download, the
+filename already carries the server, so just run it:
+
+```
+"OpenPrintDeploy - printsrv01.corp.local.exe" install
+```
+
+Or, with the bare installer, pass the server explicitly:
 
 ```
 OpenPrintDeploy.Client.Installer.exe install --server http://printsrv01.corp.local:5080

@@ -84,6 +84,21 @@ Remove-Item -Recurse -Force $installerTmp
 Copy-Item -Path (Join-Path $PSScriptRoot "Install-Service.ps1")   -Destination $resolvedOut -Force
 Copy-Item -Path (Join-Path $PSScriptRoot "Uninstall-Service.ps1") -Destination $resolvedOut -Force
 
+# Bundle the single-file tray-client installer under client/ so admins can
+# download it straight from the server UI (GET /download/client), pre-named for
+# this host. Built fresh here so it always matches this release.
+$clientTmp = Join-Path $repoRoot "publish/server-client-tmp"
+if (Test-Path $clientTmp) { Remove-Item -Recurse -Force $clientTmp }
+Write-Host "Building tray-client installer to bundle for download..."
+& (Join-Path $PSScriptRoot "Publish-Client.ps1") `
+    -Configuration $Configuration -Runtime $Runtime -OutDir $clientTmp -Version $Version
+$clientSrc = Join-Path $clientTmp "OpenPrintDeploy.Client.Installer.exe"
+if (-not (Test-Path $clientSrc)) { throw "Client installer exe missing after Publish-Client.ps1." }
+$clientDest = Join-Path $resolvedOut "client"
+New-Item -ItemType Directory -Force -Path $clientDest | Out-Null
+Copy-Item -Path $clientSrc -Destination $clientDest -Force
+Remove-Item -Recurse -Force $clientTmp
+
 # Remove the gitignored dev config so it doesn't leak production-default
 # overrides. The published exe will use appsettings.json (Negotiate + Ldap).
 $devCfg = Join-Path $resolvedOut "appsettings.Development.json"
@@ -102,3 +117,5 @@ Write-Host "Next:" -ForegroundColor Green
 Write-Host "  1. Copy the folder to the print server."
 Write-Host "  2. Right-click OpenPrintDeploy.Installer.exe > Run as administrator."
 Write-Host "     (Or use Install-Service.ps1 if PowerShell isn't blocked.)"
+Write-Host "  3. Admins can then download the tray client from the dashboard"
+Write-Host "     (or GET /download/client) pre-named for this server."

@@ -1,8 +1,12 @@
 @page "/"
 @attribute [Authorize(Policy = AuthPolicies.Admin)]
+@using System.IO
 @using OpenPrintDeploy.Server.Admin
+@using OpenPrintDeploy.Server.Download
 @inject PrinterService Printers
 @inject ZoneService Zones
+@inject IConfiguration Config
+@inject IWebHostEnvironment Env
 
 <PageTitle>OpenPrintDeploy Admin</PageTitle>
 
@@ -31,13 +35,44 @@
     </div>
 </div>
 
+<div class="card mt-3" style="max-width: 640px;">
+    <div class="card-body">
+        <h5 class="card-title">Client installer</h5>
+        <p class="card-text text-muted mb-1">
+            One self-extracting exe, pre-named for this server. Run it on a
+            workstation (or wrap it for Intune) — no arguments needed; it
+            configures itself from its own filename.
+        </p>
+        <p class="card-text mb-2">
+            Saves as <code>@_installerFileName</code>
+        </p>
+        @if (_installerAvailable)
+        {
+            <a class="btn btn-sm btn-primary" href="download/client">Download client installer</a>
+        }
+        else
+        {
+            <span class="text-danger">
+                Not bundled with this server build — publish with
+                <code>scripts/Publish-Server.ps1</code> or set <code>Client:InstallerPath</code>.
+            </span>
+        }
+    </div>
+</div>
+
 @code {
     private int _printerCount;
     private int _zoneCount;
+    private string _installerFileName = "";
+    private bool _installerAvailable;
 
     protected override async Task OnInitializedAsync()
     {
         _printerCount = (await Printers.GetAllAsync()).Count;
         _zoneCount = (await Zones.GetAllAsync()).Count;
+
+        _installerFileName = ClientInstallerDownload.DownloadFileName(Config);
+        _installerAvailable = File.Exists(
+            ClientInstallerDownload.ResolveInstallerPath(Config, Env.ContentRootPath));
     }
 }

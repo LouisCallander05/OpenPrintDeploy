@@ -4,6 +4,7 @@ using OpenPrintDeploy.Server.Auth;
 using OpenPrintDeploy.Server.Components;
 using OpenPrintDeploy.Server.Data;
 using OpenPrintDeploy.Server.Directory;
+using OpenPrintDeploy.Server.Download;
 using OpenPrintDeploy.Server.Spooler;
 using OpenPrintDeploy.Server.Sync;
 using OpenPrintDeploy.Server.Zones;
@@ -114,6 +115,26 @@ app.MapPost("/sync", async (
 })
 .RequireAuthorization()
 .DisableAntiforgery();
+
+// Hands out the tray-client installer, pre-named "OpenPrintDeploy - <host>.exe"
+// so it configures itself against this server on first run (the installer reads
+// the host out of its own filename). Admin-only, same as the dashboard.
+app.MapGet("/download/client", (IConfiguration cfg, IWebHostEnvironment env) =>
+{
+    var path = ClientInstallerDownload.ResolveInstallerPath(cfg, env.ContentRootPath);
+    if (!File.Exists(path))
+    {
+        return Results.Problem(
+            detail: $"The client installer isn't bundled with this server build (looked in '{path}'). " +
+                    "Publish with scripts/Publish-Server.ps1 (it bundles the installer), or point " +
+                    "Client:InstallerPath at a built OpenPrintDeploy.Client.Installer.exe.",
+            statusCode: StatusCodes.Status404NotFound);
+    }
+
+    var fileName = ClientInstallerDownload.DownloadFileName(cfg);
+    return Results.File(path, "application/octet-stream", fileDownloadName: fileName);
+})
+.RequireAuthorization(AuthPolicies.Admin);
 
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();
