@@ -39,6 +39,7 @@ builder.Services.AddScoped<SyncHandler>();
 
 builder.Services.AddScoped<PrinterService>();
 builder.Services.AddScoped<ZoneService>();
+builder.Services.AddScoped<SyncDiagnosticsService>();
 
 // Spooler discovery (admin "Import from spooler"). WMI on Windows; an empty
 // fallback elsewhere so dev runs on Linux/macOS still render the import panel.

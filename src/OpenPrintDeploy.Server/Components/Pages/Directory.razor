@@ -2,8 +2,11 @@
 @rendermode InteractiveServer
 @attribute [Authorize(Policy = AuthPolicies.Admin)]
 @using System.Reflection
+@using Microsoft.AspNetCore.Components.Authorization
+@using OpenPrintDeploy.Server.Admin
 @using OpenPrintDeploy.Server.Directory
 @inject IDirectoryService DirectoryService
+@inject SyncDiagnosticsService Diagnostics
 
 <PageTitle>Directory · OpenPrintDeploy</PageTitle>
 
@@ -66,9 +69,150 @@
     </div>
 }
 
+<hr class="my-4" style="max-width: 48rem;" />
+
+<h2 class="h4">Check a user</h2>
+<p class="text-muted" style="max-width: 48rem;">
+    See exactly what a sync resolves for an account: the groups the directory
+    returns, the zones they match, and the printers that would deploy. Use this
+    when a client authenticates but reports "0 printers" — it tells you whether
+    the directory returned no groups (a lookup/permissions problem) or the user's
+    groups simply don't match any zone.
+</p>
+
+<div class="row g-2 align-items-end mb-3" style="max-width: 48rem;">
+    <div class="col-sm-8">
+        <label class="form-label">Username</label>
+        <input class="form-control" @bind="_username" @bind:event="oninput"
+               placeholder="DOMAIN\user or user@domain" />
+    </div>
+    <div class="col-sm-4">
+        <button class="btn btn-primary w-100" @onclick="CheckUserAsync"
+                disabled="@(_checking || string.IsNullOrWhiteSpace(_username))">
+            @(_checking ? "Checking…" : "Check user")
+        </button>
+    </div>
+</div>
+
+@if (_preview is { } p)
+{
+    <div class="card" style="max-width: 48rem;">
+        <div class="card-body">
+            <dl class="row mb-3">
+                <dt class="col-sm-4">Account looked up</dt>
+                <dd class="col-sm-8"><code>@p.NormalizedAccount</code></dd>
+
+                <dt class="col-sm-4">Groups resolved</dt>
+                <dd class="col-sm-8">@p.Groups.Count</dd>
+            </dl>
+
+            @if (p.Groups.Count == 0)
+            {
+                <div class="alert alert-warning mb-3">
+                    The directory returned <strong>no groups</strong> for this account, so no
+                    zone can match. Likely causes: the user can't be found under the search
+                    base, the server can't read the user's <code>tokenGroups</code>, or LDAP is
+                    unreachable. Run <strong>Test connection</strong> above and check the
+                    server's search base.
+                </div>
+            }
+            else if (p.Printers.Count == 0)
+            {
+                <div class="alert alert-warning mb-3">
+                    Groups resolved fine, but this user matches <strong>no zone</strong> — none of
+                    their groups are on a zone rule, or the matched zones have no printers. Compare
+                    the SIDs below with your zone rules.
+                </div>
+            }
+            else
+            {
+                <div class="alert alert-success mb-3">
+                    This user would receive <strong>@p.Printers.Count printer(s)</strong>.
+                </div>
+            }
+
+            @if (p.Printers.Count > 0)
+            {
+                <h3 class="h6">Printers that would deploy</h3>
+                <ul class="mb-3">
+                    @foreach (var printer in p.Printers)
+                    {
+                        <li>@printer.DisplayName <code class="text-muted">@printer.UncPath</code></li>
+                    }
+                </ul>
+            }
+
+            @if (p.MatchedZones.Count > 0)
+            {
+                <h3 class="h6">Matched zones</h3>
+                <ul class="mb-3">
+                    @foreach (var zone in p.MatchedZones)
+                    {
+                        <li>@zone.Name <span class="text-muted small">(@zone.MatchedSids.Count rule(s) matched)</span></li>
+                    }
+                </ul>
+            }
+
+            <h3 class="h6">Resolved groups</h3>
+            @if (p.Groups.Count == 0)
+            {
+                <p class="text-muted mb-0">(none)</p>
+            }
+            else
+            {
+                <ul class="mb-0" style="max-height: 16rem; overflow:auto;">
+                    @foreach (var group in p.Groups)
+                    {
+                        <li>
+                            @(group.Name ?? "(name unresolved)")
+                            <code class="text-muted small">@group.Sid</code>
+                        </li>
+                    }
+                </ul>
+            }
+        </div>
+    </div>
+}
+
 @code {
     private DirectoryDiagnostics? _diag;
     private bool _busy;
+
+    private string _username = "";
+    private SyncDiagnostics? _preview;
+    private bool _checking;
+
+    [CascadingParameter]
+    private Task<AuthenticationState>? AuthState { get; set; }
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Prefill with the signed-in admin so "Check user" answers for them by
+        // default; they can type any other account to diagnose someone else.
+        if (AuthState is not null)
+        {
+            var state = await AuthState;
+            _username = state.User.Identity?.Name ?? "";
+        }
+    }
+
+    private async Task CheckUserAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_username))
+        {
+            return;
+        }
+
+        _checking = true;
+        try
+        {
+            _preview = await Diagnostics.PreviewAsync(_username.Trim());
+        }
+        finally
+        {
+            _checking = false;
+        }
+    }
 
     private async Task TestAsync()
     {
