@@ -379,6 +379,13 @@ else
         {
             _error = ex.Message;
         }
+        catch (Exception ex)
+        {
+            // Keep the form (and the admin's input) on screen with a readable
+            // message rather than letting it tear down the Blazor circuit into
+            // the generic "an error has occurred" bar.
+            _error = $"Couldn't save the zone: {ex.Message}";
+        }
         finally
         {
             _saving = false;

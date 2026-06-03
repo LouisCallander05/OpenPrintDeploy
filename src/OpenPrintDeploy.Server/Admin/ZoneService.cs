@@ -77,13 +77,29 @@ public sealed class ZoneService
         zone.Name = input.Name.Trim();
         zone.Priority = input.Priority;
 
-        // Replace rules wholesale — simplest correct reconciliation for a
-        // handful of rules per zone.
+        // Replace rules wholesale. New rules carry fresh keys, so deleting the
+        // old set and inserting the new one can't collide; set the FK explicitly
+        // and add through the DbSet rather than reassigning the navigation.
         db.ZoneRules.RemoveRange(zone.Rules);
-        zone.Rules = rules;
+        foreach (var rule in rules)
+        {
+            rule.ZoneId = id;
+            db.ZoneRules.Add(rule);
+        }
 
-        zone.Printers.Clear();
-        foreach (var printer in printers)
+        // Reconcile the printer assignments by diffing. Clearing the collection
+        // and re-adding the same printers would delete and re-insert identical
+        // join rows, and EF Core refuses to track a new join entity whose key
+        // matches one it already tracks (now marked deleted) — that's the
+        // "unknown error" that broke editing. Touch only what actually changed.
+        var desiredIds = printerIds.ToHashSet();
+        foreach (var existing in zone.Printers.Where(p => !desiredIds.Contains(p.Id)).ToList())
+        {
+            zone.Printers.Remove(existing);
+        }
+
+        var alreadyLinked = zone.Printers.Select(p => p.Id).ToHashSet();
+        foreach (var printer in printers.Where(p => !alreadyLinked.Contains(p.Id)))
         {
             zone.Printers.Add(printer);
         }
