@@ -10,9 +10,21 @@ namespace OpenPrintDeploy.Client.Installer;
 ///   OpenPrintDeploy.Client.Installer.exe uninstall
 ///   OpenPrintDeploy.Client.Installer.exe uninstall --remove-data
 ///   OpenPrintDeploy.Client.Installer.exe --help
+///
+/// The server can also be supplied by simply renaming the installer. A file
+/// named "OpenPrintDeploy - &lt;host&gt;.exe" configures the tray to talk to
+/// that host with no arguments at all — double-clicking is enough. This is the
+/// zero-touch path for non-technical deployers: rename, ship, run.
 /// </summary>
 internal static class Program
 {
+    // Renaming the installer to "OpenPrintDeploy - <host>.exe" picks <host> as
+    // the server. Filenames can't carry a scheme or ':' port, so we apply a
+    // fixed scheme/port to the bare host. An explicit --server still wins.
+    private const string FileNameServerDelimiter = " - ";
+    private const string FileNameServerScheme    = "http";
+    private const int    FileNameServerPort       = 5080;
+
     public static int Main(string[] args)
     {
         try
@@ -74,7 +86,61 @@ internal static class Program
             }
         }
 
+        // An explicit --server always wins. Otherwise, fall back to a server
+        // encoded in the installer's own filename. (For uninstall this is
+        // irrelevant — we never write config there.)
+        if (mode == Mode.Install && string.IsNullOrWhiteSpace(server))
+        {
+            server = TryDeriveServerFromFileName();
+        }
+
         return new Args(mode, server, removeData);
+    }
+
+    /// <summary>
+    /// Reads the server host out of the installer's own filename. A file named
+    /// "OpenPrintDeploy - 0912SPS01.services.education.vic.gov.au.exe" yields
+    /// "http://0912SPS01.services.education.vic.gov.au:5080". Returns null when
+    /// the filename carries no "<c> - </c>" delimiter (e.g. the default
+    /// "OpenPrintDeploy.Client.Installer.exe"), so a normal run is unaffected.
+    /// </summary>
+    private static string? TryDeriveServerFromFileName()
+    {
+        var path = Environment.ProcessPath;
+        if (string.IsNullOrEmpty(path))
+        {
+            return null;
+        }
+
+        var name = Path.GetFileNameWithoutExtension(path);
+        var idx = name.IndexOf(FileNameServerDelimiter, StringComparison.Ordinal);
+        if (idx < 0)
+        {
+            return null;
+        }
+
+        var host = name[(idx + FileNameServerDelimiter.Length)..].Trim();
+
+        // Defensive: if the file was named with a wrapper extension that
+        // GetFileNameWithoutExtension didn't strip (e.g. "...au.msi.exe" leaves
+        // "...au.msi"), drop a trailing installer extension. Real hostnames
+        // never end in .msi/.exe so this can't eat a legitimate label.
+        foreach (var ext in new[] { ".msi", ".exe" })
+        {
+            if (host.EndsWith(ext, StringComparison.OrdinalIgnoreCase))
+            {
+                host = host[..^ext.Length].Trim();
+            }
+        }
+
+        if (host.Length == 0)
+        {
+            return null;
+        }
+
+        var url = $"{FileNameServerScheme}://{host}:{FileNameServerPort}";
+        Console.WriteLine($"No --server given; using server from installer filename: {url}");
+        return url;
     }
 
     private static int PrintHelp()
@@ -92,6 +158,12 @@ internal static class Program
         Console.WriteLine("  OpenPrintDeploy.Client.Installer.exe uninstall --remove-data");
         Console.WriteLine("                                                Also wipe per-user state on this machine.");
         Console.WriteLine("  OpenPrintDeploy.Client.Installer.exe --help   Show this help.");
+        Console.WriteLine();
+        Console.WriteLine("Zero-touch alternative — no arguments needed:");
+        Console.WriteLine("  Rename the installer to \"OpenPrintDeploy - <host>.exe\" and run it.");
+        Console.WriteLine("  e.g. \"OpenPrintDeploy - printsrv01.corp.local.exe\"");
+        Console.WriteLine($"       configures the server as {FileNameServerScheme}://printsrv01.corp.local:{FileNameServerPort}");
+        Console.WriteLine("  An explicit --server overrides the name.");
         Console.WriteLine();
         Console.WriteLine("Must be run elevated (double-click triggers UAC; Intune runs as SYSTEM).");
         Console.WriteLine();

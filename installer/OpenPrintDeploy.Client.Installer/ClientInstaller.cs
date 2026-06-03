@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.IO.Compression;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Win32;
@@ -10,6 +11,11 @@ internal static class ClientInstaller
     private const string TrayExeName  = "OpenPrintDeploy.Client.Tray.exe";
     private const string RunValueName = "OpenPrintDeployTray";
     private const string RunKeyPath   = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Run";
+
+    // Logical name of the embedded tray folder (zipped). Present only in the
+    // released single-file installer; absent in plain dev builds. Kept in sync
+    // with the <LogicalName> in the .csproj.
+    private const string PayloadResourceName = "tray-payload.zip";
     // Hive-relative path to the per-machine Run key. HKLM, so the tray launches
     // for every user logging into this machine — that's the deployment model.
 
@@ -20,22 +26,6 @@ internal static class ClientInstaller
 
     public static int Install(string? serverUrl)
     {
-        var sourceDir = AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar);
-        var sourceExe = Path.Combine(sourceDir, TrayExeName);
-
-        if (!File.Exists(sourceExe))
-        {
-            throw new InvalidOperationException(
-                $"Could not find {TrayExeName} next to the installer. Run this exe from the extracted publish folder.");
-        }
-
-        if (string.Equals(sourceDir, InstallDir, StringComparison.OrdinalIgnoreCase))
-        {
-            throw new InvalidOperationException(
-                $"The installer is running from {InstallDir} — that's the install destination. " +
-                "Run it from the publish/extracted folder instead.");
-        }
-
         // On install/upgrade we need the running tray (in any user's session) to
         // release file handles on the binaries. Killing all instances and letting
         // the Run key relaunch on next logon is the simplest reliable approach;
@@ -45,19 +35,25 @@ internal static class ClientInstaller
         KillRunningTray();
         Thread.Sleep(1000);
 
-        Log($"Copying files to {InstallDir}...");
+        Log($"Installing files to {InstallDir}...");
         EnsureDirectory(InstallDir);
-        CopyDirectory(sourceDir, InstallDir);
+        StageTrayFiles();
 
-        // Files extracted from a zip downloaded from the internet carry the
+        // Files that came out of a zip downloaded from the internet carry the
         // Mark-of-the-Web (a Zone.Identifier alternate data stream). The .NET
         // runtime's assembly loader honours that for self-contained WPF
         // dependencies — load fails with FileNotFoundException for things
-        // like WindowsBase.dll. Strip the ADS off everything we just copied.
+        // like WindowsBase.dll. Strip the ADS off everything we just placed.
         Log("Stripping Mark-of-the-Web from installed files...");
         UnblockDirectory(InstallDir);
 
         var installedExe = Path.Combine(InstallDir, TrayExeName);
+        if (!File.Exists(installedExe))
+        {
+            throw new InvalidOperationException(
+                $"Install incomplete: {TrayExeName} was not found in {InstallDir} after staging files.");
+        }
+
         WriteAppSettings(installedExe, serverUrl);
 
         Log("Registering tray for auto-start at user logon...");
@@ -66,6 +62,49 @@ internal static class ClientInstaller
         PrintInstallSummary(installedExe);
         Program.WaitForKeyIfInteractive();
         return 0;
+    }
+
+    /// <summary>
+    /// Puts the tray binaries into <see cref="InstallDir"/>. The released
+    /// installer is a single self-extracting exe — it carries the whole tray
+    /// folder as an embedded zip, so it installs with no companion files (the
+    /// Intune-friendly, "download one file" path). A plain dev build has no
+    /// embedded payload and instead copies the tray that sits next to the
+    /// installer in a publish folder.
+    /// </summary>
+    private static void StageTrayFiles()
+    {
+        var payload = typeof(ClientInstaller).Assembly.GetManifestResourceStream(PayloadResourceName);
+        if (payload is not null)
+        {
+            Log("Extracting bundled tray payload...");
+            using (payload)
+            using (var archive = new ZipArchive(payload, ZipArchiveMode.Read))
+            {
+                archive.ExtractToDirectory(InstallDir, overwriteFiles: true);
+            }
+            return;
+        }
+
+        // No embedded payload (dev/folder publish): copy the tray sitting next
+        // to us instead.
+        var sourceDir = AppContext.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar);
+        var sourceExe = Path.Combine(sourceDir, TrayExeName);
+        if (!File.Exists(sourceExe))
+        {
+            throw new InvalidOperationException(
+                $"This installer has no embedded payload and {TrayExeName} isn't next to it. " +
+                "Use the released single-file installer, or run from the extracted publish folder.");
+        }
+        if (string.Equals(sourceDir, InstallDir, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"The installer is running from {InstallDir} — that's the install destination. " +
+                "Run it from the publish/extracted folder instead.");
+        }
+
+        Log($"Copying files from {sourceDir}...");
+        CopyDirectory(sourceDir, InstallDir);
     }
 
     public static int Uninstall(bool removeData)
@@ -155,7 +194,8 @@ internal static class ClientInstaller
             if (string.IsNullOrWhiteSpace(existing))
             {
                 throw new InvalidOperationException(
-                    "First-time install: pass --server <url> (e.g. --server http://printsrv01.corp.local:5080).");
+                    "First-time install: pass --server <url> (e.g. --server http://printsrv01.corp.local:5080), " +
+                    "or rename the installer to \"OpenPrintDeploy - <host>.exe\" and run it.");
             }
         }
 

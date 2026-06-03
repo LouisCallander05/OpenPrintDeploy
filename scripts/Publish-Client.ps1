@@ -1,19 +1,19 @@
 <#
 .SYNOPSIS
-Produces the deployable client artifact (tray app + installer).
+Produces the deployable client artifact: a single self-extracting installer exe.
 
 .DESCRIPTION
-Publishes the Tray as a self-contained win-x64 folder build and the Client
-installer alongside it (also self-contained), merging both into one folder.
-Both targets are self-contained on the same .NET 8 win-x64 runtime, so the
-shared runtime DLLs are byte-identical and safe to overwrite.
+Publishes the Tray as a self-contained win-x64 folder, zips that folder, and
+embeds the zip into the Client installer so the installer publishes as ONE
+self-extracting exe. The operator deploys a single file:
 
-The result is one folder the operator can copy to a workstation and run:
+    OpenPrintDeploy.Client.Installer.exe   <- carries the tray inside it
 
-    OpenPrintDeploy.Client.Tray.exe          <- the tray
-    OpenPrintDeploy.Client.Installer.exe     <- per-machine install (UAC)
-    appsettings.json                         <- placeholder; installer rewrites
-    ... runtime DLLs ...
+Running it (UAC) extracts the tray to Program Files, configures the server, and
+registers logon auto-start. The server URL can be passed with --server, or
+encoded in the filename — rename the exe to "OpenPrintDeploy - <host>.exe" and
+it configures http://<host>:5080 with no arguments. That's also how the server's
+own download endpoint hands the file out (pre-named for its host).
 
 .PARAMETER OutDir
 Where the publish output lands. Relative paths resolve against the repo root.
@@ -38,10 +38,12 @@ $ErrorActionPreference = "Stop"
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $resolvedOut = if ([IO.Path]::IsPathRooted($OutDir)) { $OutDir } else { Join-Path $repoRoot $OutDir }
-$installerTmp = Join-Path $repoRoot "publish/client-installer-tmp"
+$trayDir     = Join-Path $repoRoot "publish/client-tray-tmp"
+$payloadZip  = Join-Path $repoRoot "publish/client-tray-payload.zip"
 
-if (Test-Path $resolvedOut)  { Remove-Item -Recurse -Force $resolvedOut }
-if (Test-Path $installerTmp) { Remove-Item -Recurse -Force $installerTmp }
+if (Test-Path $resolvedOut) { Remove-Item -Recurse -Force $resolvedOut }
+if (Test-Path $trayDir)     { Remove-Item -Recurse -Force $trayDir }
+if (Test-Path $payloadZip)  { Remove-Item -Force $payloadZip }
 
 $versionProps = @()
 if (-not [string]::IsNullOrWhiteSpace($Version)) {
@@ -51,44 +53,29 @@ if (-not [string]::IsNullOrWhiteSpace($Version)) {
 
 Push-Location $repoRoot
 try {
-    Write-Host "Publishing tray (self-contained $Runtime) to $resolvedOut..."
+    Write-Host "Publishing tray (self-contained $Runtime) to $trayDir..."
     & dotnet publish src/OpenPrintDeploy.Client.Tray `
         -c $Configuration `
         -r $Runtime `
         --self-contained true `
         -p:PublishSingleFile=false `
         @versionProps `
-        -o $resolvedOut
+        -o $trayDir
     if ($LASTEXITCODE -ne 0) { throw "dotnet publish (tray) failed (exit $LASTEXITCODE)" }
-
-    Write-Host "Publishing client installer (self-contained $Runtime) to $installerTmp..."
-    & dotnet publish installer/OpenPrintDeploy.Client.Installer `
-        -c $Configuration `
-        -r $Runtime `
-        --self-contained true `
-        @versionProps `
-        -o $installerTmp
-    if ($LASTEXITCODE -ne 0) { throw "dotnet publish (client installer) failed (exit $LASTEXITCODE)" }
 }
 finally {
     Pop-Location
 }
 
-Write-Host "Merging installer into $resolvedOut..."
-Copy-Item -Path (Join-Path $installerTmp "*") -Destination $resolvedOut -Recurse -Force
-Remove-Item -Recurse -Force $installerTmp
-
-$trayExe      = Join-Path $resolvedOut "OpenPrintDeploy.Client.Tray.exe"
-$installerExe = Join-Path $resolvedOut "OpenPrintDeploy.Client.Installer.exe"
-if (-not (Test-Path $trayExe))      { throw "Tray exe missing from publish folder." }
-if (-not (Test-Path $installerExe)) { throw "Client installer exe missing from publish folder." }
+$trayExe = Join-Path $trayDir "OpenPrintDeploy.Client.Tray.exe"
+if (-not (Test-Path $trayExe)) { throw "Tray exe missing from tray publish folder." }
 
 # Catch a class of silently-broken self-contained WPF publishes. If the build
 # config ever drops the WindowsDesktop runtime pack from deps.json again, the
 # tray would launch on a dev box (where the runtime is installed system-wide)
 # but crash with FileNotFoundException for WindowsBase on a clean endpoint.
 # Better to fail the publish here than to ship that to Intune.
-$depsJsonPath = Join-Path $resolvedOut "OpenPrintDeploy.Client.Tray.deps.json"
+$depsJsonPath = Join-Path $trayDir "OpenPrintDeploy.Client.Tray.deps.json"
 if (-not (Test-Path $depsJsonPath)) { throw "deps.json missing from tray publish -- did the publish silently fail?" }
 $depsRaw = Get-Content $depsJsonPath -Raw
 if ($depsRaw -notmatch 'runtimepack\.Microsoft\.WindowsDesktop\.App\.Runtime') {
@@ -133,7 +120,7 @@ if (-not $wpfRuntimePackDir) {
 Write-Host "Overlaying WindowsDesktop runtime pack DLLs from $wpfRuntimePackDir..."
 $overlaid = 0
 Get-ChildItem $wpfRuntimePackDir -Filter *.dll | ForEach-Object {
-    $dest = Join-Path $resolvedOut $_.Name
+    $dest = Join-Path $trayDir $_.Name
     if (Test-Path $dest) {
         Copy-Item -Force -LiteralPath $_.FullName -Destination $dest
         $overlaid++
@@ -143,7 +130,7 @@ Write-Host "  Overlaid $overlaid DLL(s)."
 
 # Final guard: WindowsBase.dll in the published output must be the real
 # AssemblyVersion 8.0.0.0 implementation, not the 4.0.0.0 facade.
-$wbPath = Join-Path $resolvedOut "WindowsBase.dll"
+$wbPath = Join-Path $trayDir "WindowsBase.dll"
 $wbVer  = [System.Reflection.AssemblyName]::GetAssemblyName($wbPath).Version
 if ($wbVer.Major -lt 8) {
     throw ("Bundled WindowsBase.dll is the wrong version ($wbVer). " +
@@ -151,12 +138,56 @@ if ($wbVer.Major -lt 8) {
            "not the AssemblyVersion 4.0.0.0 facade from the NETCore.App runtime pack.")
 }
 
+# Zip the (now correct) tray folder so it can be embedded in the installer.
+# CreateFromDirectory with includeBaseDirectory=false puts the tray's files at
+# the zip root, so the installer extracts them straight into the install dir.
+# Windows PowerShell 5.1 (what CI's `shell: powershell` uses) doesn't auto-load
+# these assemblies, so load them explicitly before referencing the types.
+Add-Type -AssemblyName System.IO.Compression
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+Write-Host "Zipping tray payload -> $payloadZip..."
+[System.IO.Compression.ZipFile]::CreateFromDirectory(
+    $trayDir, $payloadZip,
+    [System.IO.Compression.CompressionLevel]::Optimal,
+    $false)
+
+Push-Location $repoRoot
+try {
+    # Publish the installer as a single self-contained exe with the tray zip
+    # embedded (TrayPayloadZip -> <EmbeddedResource> in the .csproj).
+    Write-Host "Publishing single-file installer (tray embedded) to $resolvedOut..."
+    & dotnet publish installer/OpenPrintDeploy.Client.Installer `
+        -c $Configuration `
+        -r $Runtime `
+        --self-contained true `
+        -p:PublishSingleFile=true `
+        -p:IncludeNativeLibrariesForSelfExtract=true `
+        -p:EnableCompressionInSingleFile=true `
+        "-p:TrayPayloadZip=$payloadZip" `
+        @versionProps `
+        -o $resolvedOut
+    if ($LASTEXITCODE -ne 0) { throw "dotnet publish (client installer) failed (exit $LASTEXITCODE)" }
+}
+finally {
+    Pop-Location
+}
+
+$installerExe = Join-Path $resolvedOut "OpenPrintDeploy.Client.Installer.exe"
+if (-not (Test-Path $installerExe)) { throw "Single-file installer exe missing from publish folder." }
+
+# Tidy the intermediates; the single exe in $resolvedOut is the whole artifact.
+Remove-Item -Recurse -Force $trayDir
+Remove-Item -Force $payloadZip
+
+$sizeMb = [math]::Round((Get-Item $installerExe).Length / 1MB, 1)
+
 Write-Host ""
 Write-Host "Publish complete:" -ForegroundColor Green
-Write-Host "  $resolvedOut"
+Write-Host "  $installerExe  (${sizeMb} MB, self-extracting)"
 Write-Host ""
 Write-Host "Next:" -ForegroundColor Green
-Write-Host "  - Test on a workstation:"
+Write-Host "  - Test on a workstation (either form works):"
 Write-Host "      OpenPrintDeploy.Client.Installer.exe install --server http://printsrv01.corp.local:5080"
-Write-Host "  - To deploy via Intune, wrap the folder as .intunewin:"
+Write-Host "      # ...or rename to 'OpenPrintDeploy - printsrv01.corp.local.exe' and just run it"
+Write-Host "  - To deploy via Intune, wrap the single exe as .intunewin:"
 Write-Host "      IntuneWinAppUtil.exe -c $resolvedOut -s OpenPrintDeploy.Client.Installer.exe -o <out>"

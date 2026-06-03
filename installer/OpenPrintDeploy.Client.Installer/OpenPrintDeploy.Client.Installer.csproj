@@ -18,4 +18,16 @@
     <NuGetAudit>false</NuGetAudit>
   </PropertyGroup>
 
+  <!-- When Publish-Client.ps1 supplies a tray payload zip (a published tray
+       folder, zipped), embed it so the installer ships as ONE self-extracting
+       exe: download a single file, run it, done. Without it (a plain dev
+       `dotnet build`) the installer has no payload and falls back to copying
+       the tray from files sitting next to it in a publish folder. -->
+  <ItemGroup Condition="'$(TrayPayloadZip)' != ''">
+    <EmbeddedResource Include="$(TrayPayloadZip)">
+      <LogicalName>tray-payload.zip</LogicalName>
+      <Visible>false</Visible>
+    </EmbeddedResource>
+  </ItemGroup>
+
 </Project>
