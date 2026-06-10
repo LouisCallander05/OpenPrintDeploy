@@ -5,10 +5,12 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <base href="/" />
+    @* Version query string busts the browser cache on upgrade — without it the
+       app.css / scoped-CSS bundle / favicon stay stale after an MSI update. *@
     <link rel="stylesheet" href="bootstrap/bootstrap.min.css" />
-    <link rel="stylesheet" href="app.css" />
-    <link rel="stylesheet" href="OpenPrintDeploy.Server.styles.css" />
-    <link rel="icon" type="image/png" href="favicon.png" />
+    <link rel="stylesheet" href="app.css?v=@BuildInfo.Version" />
+    <link rel="stylesheet" href="OpenPrintDeploy.Server.styles.css?v=@BuildInfo.Version" />
+    <link rel="icon" type="image/png" href="favicon.png?v=@BuildInfo.Version" />
     <title>Open Print Deploy — Admin</title>
     <HeadOutlet />
 </head>
