@@ -9,7 +9,8 @@ main {
 }
 
 .sidebar {
-    background-image: linear-gradient(180deg, rgb(5, 39, 103) 0%, #3a0647 70%);
+    /* Brand navy → deep teal, sampled from the logo. */
+    background-image: linear-gradient(180deg, #0B4070 0%, #0E5E6B 100%);
 }
 
 .top-row {

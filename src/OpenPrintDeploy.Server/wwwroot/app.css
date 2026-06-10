@@ -1,19 +1,43 @@
+/* Brand palette, sampled from the Open Print Deploy logo. */
+:root {
+    --opd-navy: #0B4070;
+    --opd-navy-deep: #0E5E6B;
+    --opd-teal: #18C5B8;
+    --opd-link: #0E6A8C;
+}
+
 html, body {
     font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
 }
 
 a, .btn-link {
-    color: #006bb7;
+    color: var(--opd-link);
 }
 
 .btn-primary {
     color: #fff;
-    background-color: #1b6ec2;
-    border-color: #1861ac;
+    background-color: var(--opd-navy);
+    border-color: var(--opd-navy);
+}
+
+.btn-primary:hover, .btn-primary:focus, .btn-primary:active {
+    background-color: var(--opd-navy-deep);
+    border-color: var(--opd-navy-deep);
+}
+
+.btn-outline-primary {
+    color: var(--opd-navy);
+    border-color: var(--opd-navy);
+}
+
+.btn-outline-primary:hover, .btn-outline-primary:active {
+    color: #fff;
+    background-color: var(--opd-navy);
+    border-color: var(--opd-navy);
 }
 
 .btn:focus, .btn:active:focus, .btn-link.nav-link:focus, .form-control:focus, .form-check-input:focus {
-  box-shadow: 0 0 0 0.1rem white, 0 0 0 0.25rem #258cfb;
+  box-shadow: 0 0 0 0.1rem white, 0 0 0 0.25rem var(--opd-teal);
 }
 
 .content {

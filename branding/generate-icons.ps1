@@ -134,6 +134,17 @@ $logoBytes = Resize-ToPng $square 512
 [System.IO.File]::WriteAllBytes($logoPath, $logoBytes)
 Write-Host "Wrote $logoPath ($($logoBytes.Length) bytes)"
 
+# --- server admin UI assets: sidebar logo + browser favicon -------------------
+$serverWww = Join-Path $root 'src/OpenPrintDeploy.Server/wwwroot'
+if (Test-Path $serverWww) {
+    $brandPng   = Join-Path $serverWww 'brand-logo.png'
+    $faviconPng = Join-Path $serverWww 'favicon.png'
+    [System.IO.File]::WriteAllBytes($brandPng,   (Resize-ToPng $square 256))
+    [System.IO.File]::WriteAllBytes($faviconPng, (Resize-ToPng $square 64))
+    Write-Host "Wrote $brandPng"
+    Write-Host "Wrote $faviconPng"
+}
+
 # --- build the multi-size .ico (PNG-compressed frames; Win10/11 targets) ------
 $sizes = 16, 20, 24, 32, 40, 48, 64, 128, 256
 $frames = foreach ($s in $sizes) { ,(Resize-ToPng $square $s) }

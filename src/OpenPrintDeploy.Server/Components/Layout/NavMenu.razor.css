@@ -17,11 +17,20 @@
 
 .top-row {
     height: 3.5rem;
-    background-color: rgba(0,0,0,0.4);
+    background-color: rgba(0,0,0,0.2);
 }
 
 .navbar-brand {
     font-size: 1.1rem;
+    font-weight: 600;
+    gap: 0.6rem;
+}
+
+.brand-logo {
+    width: 30px;
+    height: 30px;
+    /* The logo art is on transparent; a soft glow lifts it off the dark sidebar. */
+    filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.35));
 }
 
 .bi {
@@ -60,7 +69,7 @@
     }
 
     .nav-item ::deep .nav-link {
-        color: #d7d7d7;
+        color: #e6eef2;
         background: none;
         border: none;
         border-radius: 4px;
@@ -72,7 +81,8 @@
     }
 
 .nav-item ::deep a.active {
-    background-color: rgba(255,255,255,0.37);
+    background-color: rgba(24, 197, 184, 0.30); /* brand teal */
+    box-shadow: inset 3px 0 0 #18C5B8;
     color: white;
 }
 
