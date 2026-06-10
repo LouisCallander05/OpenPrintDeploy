@@ -53,7 +53,7 @@ public sealed class AdminAccessStore
             var dir = Path.GetDirectoryName(_path);
             if (!string.IsNullOrEmpty(dir))
             {
-                Directory.CreateDirectory(dir);
+                System.IO.Directory.CreateDirectory(dir);
             }
 
             var dto = new Dto { Groups = Clean(access.Groups), Users = Clean(access.Users) };
