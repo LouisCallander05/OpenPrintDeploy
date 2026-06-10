@@ -75,19 +75,37 @@ public sealed class LdapDirectoryService : IDirectoryService
             return Empty();
         }
 
+        var domainHint = DirectoryUsername.ExtractDomain(username);
+
         try
         {
             return await Task.Run(() =>
             {
-                var sids = ResolveGroups(sam);
-                if (sids.Count == 0)
+                // If the caller gave an explicit domain prefix (e.g. edu002\ST02438),
+                // route directly to that DC so cross-domain lookups work without
+                // falling through the home-domain search first.
+                if (domainHint is not null)
+                {
+                    var target = FindEndpointForDomain(domainHint);
+                    if (target is not null)
+                    {
+                        var sids = ResolveGroupsOnEndpoint(sam, target);
+                        if (sids.Count > 0)
+                        {
+                            return sids;
+                        }
+                    }
+                }
+
+                var result = ResolveGroups(sam);
+                if (result.Count == 0)
                 {
                     // Not found in this server's domain — the user may live in
                     // another domain of the forest (e.g. edu002 vs edu001).
-                    sids = ResolveGroupsForestWide(sam);
+                    result = ResolveGroupsForestWide(sam);
                 }
 
-                return sids;
+                return result;
             }, ct);
         }
         catch (Exception ex)
@@ -507,41 +525,76 @@ public sealed class LdapDirectoryService : IDirectoryService
     {
         foreach (var endpoint in _forestEndpoints.Value)
         {
-            try
+            var sids = ResolveGroupsOnEndpoint(sam, endpoint);
+            if (sids.Count > 0)
             {
-                using var connection = CreateBoundConnection(endpoint);
-                var userDn = FindSingleDn(connection, endpoint.SearchBase,
-                    $"(&(objectClass=user)(sAMAccountName={EscapeFilter(sam)}))");
-                if (userDn is null)
-                {
-                    continue;
-                }
-
-                var request = new SearchRequest(userDn, "(objectClass=*)", SearchScope.Base, "tokenGroups");
-                var response = (SearchResponse)connection.SendRequest(request);
-
-                var sids = new HashSet<string>(StringComparer.Ordinal);
-                if (response.Entries.Count > 0
-                    && response.Entries[0].Attributes["tokenGroups"] is { } attribute)
-                {
-                    foreach (var value in attribute.GetValues(typeof(byte[])))
-                    {
-                        if (value is byte[] raw)
-                        {
-                            sids.Add(SidConverter.ToSidString(raw));
-                        }
-                    }
-                }
-
                 return sids;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogDebug(ex, "Forest user lookup failed in {Domain}.", endpoint.Server);
             }
         }
 
         return Empty();
+    }
+
+    /// <summary>
+    /// Reads tokenGroups for <paramref name="sam"/> from a specific DC endpoint.
+    /// Returns an empty set (never throws) if the user isn't found or the DC is
+    /// unreachable, so callers can safely iterate multiple endpoints.
+    /// </summary>
+    private IReadOnlySet<string> ResolveGroupsOnEndpoint(string sam, Endpoint endpoint)
+    {
+        try
+        {
+            using var connection = CreateBoundConnection(endpoint);
+            var userDn = FindSingleDn(connection, endpoint.SearchBase,
+                $"(&(objectClass=user)(sAMAccountName={EscapeFilter(sam)}))");
+            if (userDn is null)
+            {
+                return Empty();
+            }
+
+            var request = new SearchRequest(userDn, "(objectClass=*)", SearchScope.Base, "tokenGroups");
+            var response = (SearchResponse)connection.SendRequest(request);
+
+            var sids = new HashSet<string>(StringComparer.Ordinal);
+            if (response.Entries.Count > 0
+                && response.Entries[0].Attributes["tokenGroups"] is { } attribute)
+            {
+                foreach (var value in attribute.GetValues(typeof(byte[])))
+                {
+                    if (value is byte[] raw)
+                    {
+                        sids.Add(SidConverter.ToSidString(raw));
+                    }
+                }
+            }
+
+            return sids;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "User lookup failed in {Domain}.", endpoint.Server);
+            return Empty();
+        }
+    }
+
+    /// <summary>
+    /// Finds the forest endpoint whose DNS name matches a domain hint. Accepts
+    /// a NetBIOS-style prefix (<c>edu002</c> matches <c>edu002.services.vic.gov.au</c>)
+    /// or an exact DNS name. Returns null if no endpoint matches.
+    /// </summary>
+    private Endpoint? FindEndpointForDomain(string domainHint)
+    {
+        var hint = domainHint.Trim();
+        foreach (var ep in _forestEndpoints.Value)
+        {
+            if (ep.Server.Equals(hint, StringComparison.OrdinalIgnoreCase)
+                || ep.Server.StartsWith(hint + ".", StringComparison.OrdinalIgnoreCase))
+            {
+                return ep;
+            }
+        }
+
+        return null;
     }
 
     /// <summary>Searches every forest domain for a group by name, returning the first SID match.</summary>

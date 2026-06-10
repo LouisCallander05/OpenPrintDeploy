@@ -13,10 +13,7 @@
 <h1>Directory</h1>
 
 <p class="text-muted" style="max-width: 48rem;">
-    Health check for the directory the server is talking to. On a domain-joined
-    print server the defaults auto-discover a DC and search base, and the
-    service binds with the process identity (Local SYSTEM, by default — the
-    computer account) — no password in config.
+    Health check for the directory the server is joined to.
 </p>
 
 <button class="btn btn-primary mb-3" @onclick="TestAsync" disabled="@_busy">
@@ -71,8 +68,7 @@
 <h2 class="h4">Check a user</h2>
 <p class="text-muted" style="max-width: 48rem;">
     See exactly what a sync resolves: the groups the user belongs to, the zones
-    they match, and the printers that would deploy. Use this when a client
-    authenticates but reports "0 printers".
+    they match, and the printers that would deploy.
 </p>
 
 <div class="mb-3">
@@ -80,8 +76,7 @@
         @(_checking ? "Checking…" : "Check my access (from my sign-in)")
     </button>
     <div class="form-text" style="max-width: 48rem;">
-        Uses your authenticated token — the same thing <code>/sync</code> matches on,
-        including groups from other trusted domains. This is the reliable check.
+        Uses your authenticated token. This is the reliable check.
     </div>
 </div>
 
@@ -99,9 +94,8 @@
     </div>
 </div>
 <p class="form-text mb-3" style="max-width: 48rem;">
-    Name lookup queries the server's own domain only — a user in another trusted
-    domain may show no groups here even though their sync works. Use "Check my
-    access" above to verify cross-domain accounts.
+    Include the domain prefix (e.g. <code>edu002\ST02438</code>) to look up users
+    from other trusted domains.
 </p>
 
 @if (_preview is { } p)
