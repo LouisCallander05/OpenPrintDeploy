@@ -11,9 +11,10 @@
       http://host:5080 from it (TraySettings reads the recorded OriginalDatabase).
 
   After install it launches the tray in the signed-in user's session (via a
-  post-install action that runs the tray with --launch-active-session as SYSTEM);
-  with no one logged in (e.g. an Intune ESP install) it no-ops and the Run key
-  starts the tray at next logon. A Start Menu shortcut allows a manual launch.
+  post-install action that runs the tray with a launch-active-session flag as
+  SYSTEM); with no one logged in (e.g. an Intune ESP install) it no-ops and the
+  Run key starts the tray at next logon. A Start Menu shortcut allows a manual
+  launch.
 
   Built by scripts/Publish-Client-Msi.ps1, which harvests the self-contained
   win-x64 tray publish folder passed as $(var.HarvestDir).
@@ -126,7 +127,8 @@
 
     <!-- Bring the tray up now, in the signed-in user's session. Deferred +
          Impersonate=no = runs as SYSTEM, so it can CreateProcessAsUser into the
-         console session (the tray routes --launch-active-session to that). Fired
+         console session (the tray routes that launch flag to a session launcher).
+         Fired
          after WriteRegistryValues so the spawned tray finds its server config,
          and asyncNoWait so a headless launch can never stall the install — a
          failure (or no one logged in) just means the Run key starts it at next
