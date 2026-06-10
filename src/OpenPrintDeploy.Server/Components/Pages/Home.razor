@@ -3,10 +3,12 @@
 @using System.IO
 @using OpenPrintDeploy.Server.Admin
 @using OpenPrintDeploy.Server.Download
+@using OpenPrintDeploy.Server.Https
 @inject PrinterService Printers
 @inject ZoneService Zones
 @inject IConfiguration Config
 @inject IWebHostEnvironment Env
+@inject HttpsStatus HttpsState
 
 <PageTitle>Open Print Deploy — Admin</PageTitle>
 
@@ -56,6 +58,44 @@
                 Not bundled with this server build — publish with
                 <code>scripts/Publish-Server.ps1</code> or set <code>Client:InstallerPath</code>.
             </span>
+        }
+    </div>
+</div>
+
+<div class="card mt-3" style="max-width: 640px;">
+    <div class="card-body">
+        <h5 class="card-title">Connection security</h5>
+        @if (HttpsState is { Enabled: true, Bound: true })
+        {
+            <p class="card-text text-success mb-1">
+                HTTPS is enabled on port @HttpsState.Port (HTTPS for <code>@HttpsState.Host</code>).
+            </p>
+            @if (HttpsState.SelfSigned)
+            {
+                <p class="card-text text-muted mb-0">
+                    Self-signed certificate <code>@HttpsState.Thumbprint</code>. Distribute its public
+                    certificate to clients' Trusted Root store so they trust this server, then point
+                    clients at <code>https://@(HttpsState.Host):@(HttpsState.Port)</code>.
+                </p>
+            }
+            else
+            {
+                <p class="card-text text-muted mb-0">Certificate <code>@HttpsState.Thumbprint</code>.</p>
+            }
+        }
+        else if (HttpsState.Enabled)
+        {
+            <p class="card-text text-danger mb-0">
+                HTTPS is enabled but no certificate could be provisioned — the server is serving HTTP
+                only. Check the service log, then restart.
+            </p>
+        }
+        else
+        {
+            <p class="card-text text-warning mb-0">
+                Traffic is <strong>HTTP only</strong>. Set <code>Https:Enabled</code> to <code>true</code>
+                in <code>appsettings.json</code> and restart the service to serve over TLS.
+            </p>
         }
     </div>
 </div>

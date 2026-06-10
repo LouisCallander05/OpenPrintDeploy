@@ -5,6 +5,7 @@ using OpenPrintDeploy.Server.Components;
 using OpenPrintDeploy.Server.Data;
 using OpenPrintDeploy.Server.Directory;
 using OpenPrintDeploy.Server.Download;
+using OpenPrintDeploy.Server.Https;
 using OpenPrintDeploy.Server.Spooler;
 using OpenPrintDeploy.Server.Sync;
 using OpenPrintDeploy.Server.Updates;
@@ -16,6 +17,58 @@ var builder = WebApplication.CreateBuilder(args);
 // Lets the same exe run as a console app (dev) or under the SCM as a Windows
 // service (production). No-op when not actually running as a service.
 builder.Host.UseWindowsService(o => o.ServiceName = "OpenPrintDeployServer");
+
+// HTTPS (opt-in). When off, the existing HTTP "Urls" binding is left untouched.
+// When on, we drive Kestrel's endpoints from code: HTTP stays bound (so existing
+// clients keep working) and HTTPS is added with a provisioned certificate. A
+// cert failure degrades to HTTP-only rather than crashing the service.
+var httpsOptions = builder.Configuration.GetSection(HttpsOptions.SectionName).Get<HttpsOptions>()
+    ?? new HttpsOptions();
+var httpsStatus = HttpsStatus.Disabled;
+if (httpsOptions.Enabled)
+{
+    using var bootstrapLoggerFactory = LoggerFactory.Create(b => b.AddConsole());
+    var httpsLogger = bootstrapLoggerFactory.CreateLogger("Https");
+
+    var certHost = ClientInstallerDownload.ResolveHost(builder.Configuration);
+    var certificate = HttpsProvisioner.TryEnsureCertificate(httpsOptions, certHost, httpsLogger);
+
+    httpsStatus = new HttpsStatus(
+        Enabled: true,
+        Bound: certificate is not null,
+        SelfSigned: string.IsNullOrWhiteSpace(httpsOptions.PfxPath),
+        Host: certHost,
+        Port: httpsOptions.HttpsPort,
+        Thumbprint: certificate?.Thumbprint);
+
+    // Take full control of binding from code; ignore the "Urls" config so we
+    // don't double-bind the HTTP port.
+    builder.WebHost.UseSetting(WebHostDefaults.ServerUrlsKey, string.Empty);
+    builder.WebHost.ConfigureKestrel(kestrel =>
+    {
+        var boundAnything = false;
+        if (httpsOptions.HttpPort > 0)
+        {
+            kestrel.ListenAnyIP(httpsOptions.HttpPort);
+            boundAnything = true;
+        }
+
+        if (certificate is not null)
+        {
+            kestrel.ListenAnyIP(httpsOptions.HttpsPort, listen => listen.UseHttps(certificate));
+            boundAnything = true;
+        }
+
+        // Never leave the server with no listener (e.g. HTTP disabled AND the
+        // cert failed) — that would make the admin UI unreachable.
+        if (!boundAnything)
+        {
+            kestrel.ListenAnyIP(5080);
+        }
+    });
+}
+
+builder.Services.AddSingleton(httpsStatus);
 
 // A context factory backs both the long-lived Blazor admin circuits
 // (context-per-operation) and a scoped shim for the request-scoped sync path.
