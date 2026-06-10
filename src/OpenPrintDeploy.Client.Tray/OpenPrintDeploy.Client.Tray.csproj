@@ -10,6 +10,17 @@
     <UseWindowsForms>true</UseWindowsForms>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- Win32 icon baked into the exe (Explorer, alt-tab, etc.). The same file
+         is also embedded as a WPF resource below so the tray NotifyIcon can pick
+         the DPI-appropriate frame at runtime. Regenerate via
+         branding/generate-icons.ps1. -->
+    <ApplicationIcon>Assets\appicon.ico</ApplicationIcon>
+
+    <!-- Shown in Explorer's file properties and the exe's version block. -->
+    <Product>Open Print Deploy Client</Product>
+    <AssemblyTitle>Open Print Deploy Client</AssemblyTitle>
+    <FileDescription>Open Print Deploy Client — syncs your printers from the print server.</FileDescription>
+    <Company>OpenPrintDeploy</Company>
     <!-- Lets the project compile-check on non-Windows dev/CI; it still only
          runs on Windows. Must be off on Windows publish — when set, the
          self-contained publish silently drops the Microsoft.WindowsDesktop.App
@@ -30,6 +41,13 @@
     <None Update="appsettings.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+  </ItemGroup>
+
+  <!-- Logo + icon compiled into the exe so they load via pack:// URIs with no
+       loose files to ship (see Branding.cs). -->
+  <ItemGroup>
+    <Resource Include="Assets\appicon.ico" />
+    <Resource Include="Assets\logo.png" />
   </ItemGroup>
 
 </Project>

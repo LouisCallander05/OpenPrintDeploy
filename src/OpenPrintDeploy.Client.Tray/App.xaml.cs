@@ -11,6 +11,7 @@ namespace OpenPrintDeploy.Client.Tray;
 public partial class App : Application
 {
     private Forms.NotifyIcon? _notifyIcon;
+    private Drawing.Icon? _trayIcon;
     private SyncCoordinator? _coordinator;
     private DispatcherTimer? _timer;
 
@@ -26,8 +27,8 @@ public partial class App : Application
         catch (Exception ex)
         {
             MessageBox.Show(
-                $"OpenPrintDeploy could not start: {ex.Message}",
-                "OpenPrintDeploy", MessageBoxButton.OK, MessageBoxImage.Error);
+                $"{Branding.ProductName} could not start: {ex.Message}",
+                Branding.ProductName, MessageBoxButton.OK, MessageBoxImage.Error);
             Shutdown(1);
             return;
         }
@@ -39,7 +40,18 @@ public partial class App : Application
             ctx => Dispatcher.Invoke(() => CredentialPrompt.Show(ctx)));
         _coordinator = new SyncCoordinator(authenticator);
 
-        var menu = new Forms.ContextMenuStrip();
+        var menu = new Forms.ContextMenuStrip { ShowImageMargin = false };
+
+        // A non-clickable branded header at the top of the menu.
+        var header = new Forms.ToolStripMenuItem(Branding.ProductName)
+        {
+            Enabled = false,
+            Font = new Drawing.Font(menu.Font, Drawing.FontStyle.Bold),
+        };
+        header.ForeColor = Branding.Navy;
+        menu.Items.Add(header);
+        menu.Items.Add(new Forms.ToolStripSeparator());
+
         menu.Items.Add("Sync now", null, async (_, _) => await SyncAsync());
         menu.Items.Add("Sign in…", null, async (_, _) =>
         {
@@ -52,11 +64,12 @@ public partial class App : Application
         menu.Items.Add(new Forms.ToolStripSeparator());
         menu.Items.Add("Exit", null, (_, _) => Shutdown());
 
+        _trayIcon = Branding.LoadIcon(Forms.SystemInformation.SmallIconSize);
         _notifyIcon = new Forms.NotifyIcon
         {
-            Icon = Drawing.SystemIcons.Application,
+            Icon = _trayIcon,
             Visible = true,
-            Text = "OpenPrintDeploy",
+            Text = Branding.ProductName,
             ContextMenuStrip = menu,
         };
 
@@ -76,15 +89,18 @@ public partial class App : Application
         }
 
         var outcome = await _coordinator.RunOnceAsync();
+        // ToolTipIcon.None suppresses the generic system info/warning glyph so
+        // Windows shows our own tray icon (the logo) in the notification instead.
+        // Success/failure is conveyed in the wording rather than a system badge.
         if (outcome.Ok)
         {
             _notifyIcon.ShowBalloonTip(
-                3000, "OpenPrintDeploy", $"{outcome.PrinterCount} printer(s) in sync.", Forms.ToolTipIcon.Info);
+                3000, Branding.ProductName, $"{outcome.PrinterCount} printer(s) in sync.", Forms.ToolTipIcon.None);
         }
         else
         {
             _notifyIcon.ShowBalloonTip(
-                5000, "OpenPrintDeploy", $"Sync failed: {outcome.Error}", Forms.ToolTipIcon.Warning);
+                5000, Branding.ProductName, $"Sync failed — {outcome.Error}", Forms.ToolTipIcon.None);
         }
     }
 
@@ -96,6 +112,7 @@ public partial class App : Application
             _notifyIcon.Visible = false;
             _notifyIcon.Dispose();
         }
+        _trayIcon?.Dispose();
 
         _coordinator?.Dispose();
         base.OnExit(e);

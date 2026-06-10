@@ -8,11 +8,15 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- Same logo as the client, so the installer exe matches in Explorer and
+         the UAC prompt. Shared from the tray project's Assets. -->
+    <ApplicationIcon>..\..\src\OpenPrintDeploy.Client.Tray\Assets\appicon.ico</ApplicationIcon>
 
     <Version Condition="'$(Version)' == ''">0.0.0-dev</Version>
     <Company>OpenPrintDeploy</Company>
-    <Product>OpenPrintDeploy Client Installer</Product>
-    <FileDescription>Installs the OpenPrintDeploy tray client (per-machine, auto-start at logon).</FileDescription>
+    <Product>Open Print Deploy Client — Installer</Product>
+    <AssemblyTitle>Open Print Deploy Client — Installer</AssemblyTitle>
+    <FileDescription>Installs the Open Print Deploy Client (per-machine, auto-start at logon).</FileDescription>
     <Copyright>MIT</Copyright>
 
     <NuGetAudit>false</NuGetAudit>

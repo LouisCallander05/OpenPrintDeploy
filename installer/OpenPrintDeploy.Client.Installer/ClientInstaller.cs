@@ -59,7 +59,10 @@ internal static class ClientInstaller
         Log("Registering tray for auto-start at user logon...");
         SetMachineRunKey(installedExe);
 
-        PrintInstallSummary(installedExe);
+        Log("Starting the tray for the current session...");
+        var started = UserSessionLauncher.TryLaunch(installedExe);
+
+        PrintInstallSummary(installedExe, started);
         Program.WaitForKeyIfInteractive();
         return 0;
     }
@@ -140,7 +143,7 @@ internal static class ClientInstaller
 
         Console.ForegroundColor = ConsoleColor.Green;
         Console.WriteLine();
-        Console.WriteLine("Uninstalled.");
+        Console.WriteLine("Open Print Deploy Client uninstalled.");
         Console.ResetColor();
         Program.WaitForKeyIfInteractive();
         return 0;
@@ -245,20 +248,30 @@ internal static class ClientInstaller
         }
     }
 
-    private static void PrintInstallSummary(string installedExe)
+    private static void PrintInstallSummary(string installedExe, bool started)
     {
         Console.ForegroundColor = ConsoleColor.Green;
         Console.WriteLine();
-        Console.WriteLine("Installed.");
+        Console.WriteLine("Open Print Deploy Client installed.");
         Console.ResetColor();
         Console.WriteLine($"  Install:    {InstallDir}");
         Console.WriteLine($"  Tray exe:   {installedExe}");
         Console.WriteLine($"  Auto-start: HKLM\\{RunKeyPath}\\{RunValueName}");
         Console.WriteLine();
-        Console.WriteLine("The tray will launch automatically the next time any user logs in.");
-        Console.WriteLine("To start it for the *current* user without logging out, pick the line for your shell:");
-        Console.WriteLine($"  PowerShell:  & \"{installedExe}\"");
-        Console.WriteLine($"  cmd:         start \"\" \"{installedExe}\"");
+
+        if (started)
+        {
+            Console.WriteLine("Open Print Deploy Client is now running, and will relaunch automatically at every logon.");
+        }
+        else
+        {
+            // No interactive session to launch into (e.g. an Intune install
+            // before anyone has signed in). The Run key handles it from here.
+            Console.WriteLine("Open Print Deploy Client will launch automatically the next time any user logs in.");
+            Console.WriteLine("To start it for the *current* user without logging out, pick the line for your shell:");
+            Console.WriteLine($"  PowerShell:  & \"{installedExe}\"");
+            Console.WriteLine($"  cmd:         start \"\" \"{installedExe}\"");
+        }
     }
 
     // ----- filesystem helpers -----

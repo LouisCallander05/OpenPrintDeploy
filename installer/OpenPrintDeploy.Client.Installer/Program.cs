@@ -145,7 +145,7 @@ internal static class Program
 
     private static int PrintHelp()
     {
-        Console.WriteLine("OpenPrintDeploy.Client.Installer  —  installs the tray client per-machine.");
+        Console.WriteLine("Open Print Deploy Client — installer (per-machine, auto-start at logon).");
         Console.WriteLine();
         Console.WriteLine("Usage:");
         Console.WriteLine("  OpenPrintDeploy.Client.Installer.exe install --server <url>");
