@@ -3,52 +3,50 @@ using System.Text;
 using System.Text.Encodings.Web;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.Extensions.Options;
-using OpenPrintDeploy.Server.Directory;
 using OpenPrintDeploy.Server.Https;
 
 namespace OpenPrintDeploy.Server.Auth;
 
 /// <summary>
-/// HTTP Basic authentication for the admin browser UI, validated against AD via
-/// an LDAP bind (see <see cref="IDirectoryService.ValidateCredentialsAsync"/>).
-/// When HTTPS is available it refuses to read credentials over plain HTTP and
-/// redirects to HTTPS instead, so passwords are only ever entered on TLS. The
-/// <c>/sync</c> API is unaffected — it stays on Negotiate.
+/// HTTP Basic authentication for the admin browser UI. Credentials are validated
+/// with the Windows LogonUser API (<see cref="WindowsLogon"/>), which also yields
+/// the user's full cross-domain group set (the PAC) — so group-based admin works
+/// across domains just like Windows SSO would. When HTTPS is available it refuses
+/// to read credentials over plain HTTP and redirects to HTTPS instead, so
+/// passwords are only ever entered on TLS. The <c>/sync</c> API is unaffected —
+/// it stays on Negotiate.
 /// </summary>
 public sealed class BasicAuthenticationHandler : AuthenticationHandler<AuthenticationSchemeOptions>
 {
     public const string SchemeName = "Basic";
 
-    private readonly IDirectoryService _directory;
     private readonly HttpsStatus _https;
 
     public BasicAuthenticationHandler(
         IOptionsMonitor<AuthenticationSchemeOptions> options,
         ILoggerFactory logger,
         UrlEncoder encoder,
-        IDirectoryService directory,
         HttpsStatus https)
         : base(options, logger, encoder)
     {
-        _directory = directory;
         _https = https;
     }
 
     /// <summary>True when we must refuse credentials on this (non-TLS) request.</summary>
     private bool RequireHttpsButMissing => !Request.IsHttps && _https.Bound;
 
-    protected override async Task<AuthenticateResult> HandleAuthenticateAsync()
+    protected override Task<AuthenticateResult> HandleAuthenticateAsync()
     {
         // Never read a password over plaintext HTTP when HTTPS is available.
         if (RequireHttpsButMissing)
         {
-            return AuthenticateResult.NoResult();
+            return Task.FromResult(AuthenticateResult.NoResult());
         }
 
         string? header = Request.Headers.Authorization;
         if (string.IsNullOrEmpty(header) || !header.StartsWith("Basic ", StringComparison.OrdinalIgnoreCase))
         {
-            return AuthenticateResult.NoResult();
+            return Task.FromResult(AuthenticateResult.NoResult());
         }
 
         string username;
@@ -59,7 +57,7 @@ public sealed class BasicAuthenticationHandler : AuthenticationHandler<Authentic
             var sep = decoded.IndexOf(':');
             if (sep < 0)
             {
-                return AuthenticateResult.Fail("Malformed Basic credentials.");
+                return Task.FromResult(AuthenticateResult.Fail("Malformed Basic credentials."));
             }
 
             username = decoded[..sep];
@@ -67,23 +65,41 @@ public sealed class BasicAuthenticationHandler : AuthenticationHandler<Authentic
         }
         catch (FormatException)
         {
-            return AuthenticateResult.Fail("Malformed Basic credentials.");
+            return Task.FromResult(AuthenticateResult.Fail("Malformed Basic credentials."));
         }
 
         if (string.IsNullOrWhiteSpace(username) || string.IsNullOrEmpty(password))
         {
-            return AuthenticateResult.Fail("Missing username or password.");
+            return Task.FromResult(AuthenticateResult.Fail("Missing username or password."));
         }
 
-        var valid = await _directory.ValidateCredentialsAsync(username, password, Context.RequestAborted);
-        if (!valid)
+        if (!OperatingSystem.IsWindows())
         {
-            return AuthenticateResult.Fail("Invalid username or password.");
+            return Task.FromResult(AuthenticateResult.Fail("Basic authentication requires Windows."));
         }
 
-        var identity = new ClaimsIdentity([new Claim(ClaimTypes.Name, username.Trim())], SchemeName);
+        ClaimsIdentity identity;
+        try
+        {
+            using var windows = WindowsLogon.Validate(username.Trim(), password);
+            if (windows is null)
+            {
+                return Task.FromResult(AuthenticateResult.Fail("Invalid username or password."));
+            }
+
+            // Copy the claims (Name + group SIDs) out of the Windows identity into
+            // a plain one, so we don't retain a Windows token handle per request.
+            identity = new ClaimsIdentity(
+                windows.Claims.ToList(), SchemeName, windows.NameClaimType, windows.RoleClaimType);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "LogonUser failed unexpectedly for {User}.", username);
+            return Task.FromResult(AuthenticateResult.Fail("Sign-in failed."));
+        }
+
         var ticket = new AuthenticationTicket(new ClaimsPrincipal(identity), SchemeName);
-        return AuthenticateResult.Success(ticket);
+        return Task.FromResult(AuthenticateResult.Success(ticket));
     }
 
     protected override Task HandleChallengeAsync(AuthenticationProperties properties)
