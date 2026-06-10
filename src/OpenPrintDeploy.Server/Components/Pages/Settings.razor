@@ -14,10 +14,10 @@
 
 <h4 class="mt-2">Administrators</h4>
 <p class="text-muted" style="max-width: 720px;">
-    Who may administer Open Print Deploy. Add the domain group(s) your IT admins belong to and/or
+    Add the domain group(s) your IT admins belong to and/or
     individual usernames. While this list is empty, anyone who can sign in is treated as an admin —
     set it as soon as you’ve confirmed sign-in works. Grants in <code>appsettings.json</code> also
-    apply and act as a break-glass if you’re ever locked out.
+    apply and act as a failsafe if you’re ever locked out.
 </p>
 
 @if (_error is not null)
@@ -104,9 +104,7 @@
             @if (HttpsState.SelfSigned)
             {
                 <p class="card-text text-muted mb-0">
-                    Self-signed certificate <code>@HttpsState.Thumbprint</code>. Distribute its public
-                    certificate to clients' Trusted Root store so they trust this server, then point
-                    clients at <code>https://@(HttpsState.Host):@(HttpsState.Port)</code>.
+                    Self-signed certificate <code>@HttpsState.Thumbprint</code>.
                 </p>
             }
             else
