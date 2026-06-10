@@ -58,9 +58,8 @@
     <!-- Everything in the publish folder EXCEPT the service exe (authored
          explicitly below). Subfolders, including client/, are preserved. -->
     <ComponentGroup Id="ServerFiles" Directory="INSTALLFOLDER">
-      <Files>
-        <Include Path="$(var.HarvestDir)\**" />
-        <Exclude Path="$(var.HarvestDir)\OpenPrintDeploy.Server.exe" />
+      <Files Include="$(var.HarvestDir)\**">
+        <Exclude Files="$(var.HarvestDir)\OpenPrintDeploy.Server.exe" />
       </Files>
     </ComponentGroup>
 
