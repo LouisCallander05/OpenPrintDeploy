@@ -18,7 +18,7 @@
      xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
 
   <Package
-      Name="OpenPrintDeploy Server"
+      Name="Open Print Deploy Server"
       Manufacturer="OpenPrintDeploy"
       Version="$(var.ProductVersion)"
       Scope="perMachine"
@@ -30,14 +30,16 @@
          UpgradeCode above MUST never change or upgrades stop chaining. -->
     <MajorUpgrade
         AllowSameVersionUpgrades="yes"
-        DowngradeErrorMessage="A newer version of OpenPrintDeploy Server is already installed. Uninstall it first to install an older build." />
+        DowngradeErrorMessage="A newer version of Open Print Deploy Server is already installed. Uninstall it first to install an older build." />
 
     <!-- Single self-contained .msi (cab embedded). -->
     <MediaTemplate EmbedCab="yes" />
 
     <Property Id="ARPHELPLINK" Value="https://github.com/OpenPrintDeploy/OpenPrintDeploy" />
+    <Icon Id="OpdServerIcon" SourceFile="..\..\src\OpenPrintDeploy.Client.Tray\Assets\appicon.ico" />
+    <Property Id="ARPPRODUCTICON" Value="OpdServerIcon" />
 
-    <Feature Id="Main" Title="OpenPrintDeploy Server" Level="1">
+    <Feature Id="Main" Title="Open Print Deploy Server" Level="1">
       <ComponentGroupRef Id="ServerFiles" />
       <ComponentRef Id="ServerExe" />
       <ComponentRef Id="AdminShortcut" />
@@ -74,8 +76,8 @@
         <ServiceInstall
             Id="OpenPrintDeployServerSvc"
             Name="OpenPrintDeployServer"
-            DisplayName="OpenPrintDeploy Server"
-            Description="OpenPrintDeploy admin server + /sync API for zone-driven printer deployment."
+            DisplayName="Open Print Deploy Server"
+            Description="Open Print Deploy admin server + /sync API for zone-driven printer deployment."
             Type="ownProcess"
             Start="auto"
             ErrorControl="normal"
