@@ -21,9 +21,10 @@ public sealed class WindowsPrinterApplier : IPrinterApplier
             ct.ThrowIfCancellationRequested();
             if (!AddPrinterConnection(printer.UncPath))
             {
-                throw new Win32Exception(
-                    Marshal.GetLastWin32Error(),
-                    $"AddPrinterConnection failed for {printer.UncPath}");
+                var code = Marshal.GetLastWin32Error();
+                var reason = new Win32Exception(code).Message;
+                throw new Win32Exception(code,
+                    $"AddPrinterConnection failed for {printer.UncPath}: {reason}");
             }
         }
 
