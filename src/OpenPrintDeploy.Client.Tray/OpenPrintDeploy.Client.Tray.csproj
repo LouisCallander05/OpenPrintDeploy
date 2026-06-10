@@ -30,6 +30,9 @@
     <EnableWindowsTargeting Condition="'$(OS)' != 'Windows_NT'">true</EnableWindowsTargeting>
     <!-- CI passes -p:Version=<git-tag-stripped> on tag builds (see release.yml). -->
     <Version Condition="'$(Version)' == ''">0.0.0-dev</Version>
+    <!-- Without this the SDK appends "+<git-sha>" to the informational version,
+         which then shows up in the tray's "Version:" line. Keep it clean. -->
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
   </PropertyGroup>
 
   <ItemGroup>

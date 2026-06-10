@@ -12,7 +12,11 @@ public partial class App : Application
 {
     private Forms.NotifyIcon? _notifyIcon;
     private Drawing.Icon? _trayIcon;
+    private Drawing.Icon? _balloonIcon;
     private SyncCoordinator? _coordinator;
+    private TrayAuthenticator? _authenticator;
+    private Forms.ToolStripMenuItem? _identityItem;
+    private Forms.ToolStripMenuItem? _signInItem;
     private DispatcherTimer? _timer;
 
     protected override async void OnStartup(StartupEventArgs e)
@@ -35,10 +39,10 @@ public partial class App : Application
 
         // The prompt must run on the UI (STA) thread; the authenticator may call
         // it from a background continuation during a sync, so marshal explicitly.
-        var authenticator = new TrayAuthenticator(
+        _authenticator = new TrayAuthenticator(
             settings.ServerBaseAddress,
             ctx => Dispatcher.Invoke(() => CredentialPrompt.Show(ctx)));
-        _coordinator = new SyncCoordinator(authenticator);
+        _coordinator = new SyncCoordinator(_authenticator);
 
         var menu = new Forms.ContextMenuStrip { ShowImageMargin = false };
 
@@ -52,12 +56,24 @@ public partial class App : Application
         menu.Items.Add(header);
         menu.Items.Add(new Forms.ToolStripSeparator());
 
-        menu.Items.Add("Sync now", null, async (_, _) => await SyncAsync());
-        menu.Items.Add("Sign in…", null, async (_, _) =>
+        // Sign-in state. On a domain/Entra-joined PC this shows "Signed in as
+        // <user>" (Kerberos) and no action; on a standalone PC the "Sign in…"
+        // action appears. Resolved asynchronously by RefreshAuthMenuAsync below.
+        _identityItem = new Forms.ToolStripMenuItem("Checking sign-in…") { Enabled = false };
+        menu.Items.Add(_identityItem);
+        _signInItem = new Forms.ToolStripMenuItem("Sign in…", null, async (_, _) =>
         {
             _coordinator?.SignIn();
+            _ = RefreshAuthMenuAsync();
             await SyncAsync();
-        });
+        })
+        {
+            Visible = false,
+        };
+        menu.Items.Add(_signInItem);
+        menu.Items.Add(new Forms.ToolStripSeparator());
+
+        menu.Items.Add("Sync now", null, async (_, _) => await SyncAsync());
         menu.Items.Add(new Forms.ToolStripSeparator());
         menu.Items.Add($"Server: {settings.ServerBaseAddress}") .Enabled = false;
         menu.Items.Add($"Version: {GetVersion()}").Enabled = false;
@@ -65,6 +81,9 @@ public partial class App : Application
         menu.Items.Add("Exit", null, (_, _) => Shutdown());
 
         _trayIcon = Branding.LoadIcon(Forms.SystemInformation.SmallIconSize);
+        // A larger frame for the notification (NIIF_LARGE_ICON), which renders
+        // bigger than the tray glyph.
+        _balloonIcon = Branding.LoadIcon(new Drawing.Size(32, 32));
         _notifyIcon = new Forms.NotifyIcon
         {
             Icon = _trayIcon,
@@ -72,6 +91,8 @@ public partial class App : Application
             Text = Branding.ProductName,
             ContextMenuStrip = menu,
         };
+
+        _ = RefreshAuthMenuAsync();
 
         // Sync at logon (startup), then on the configured interval.
         _timer = new DispatcherTimer { Interval = settings.SyncInterval };
@@ -81,27 +102,47 @@ public partial class App : Application
         await SyncAsync();
     }
 
+    /// <summary>
+    /// Updates the identity line and the visibility of the "Sign in…" item to
+    /// match the current auth mode. Safe to call repeatedly (e.g. after a manual
+    /// sign-in changes the stored account).
+    /// </summary>
+    private async Task RefreshAuthMenuAsync()
+    {
+        if (_authenticator is null || _identityItem is null || _signInItem is null)
+        {
+            return;
+        }
+
+        // Capture non-null locals so the closure below doesn't trip nullable flow.
+        Forms.ToolStripMenuItem identityItem = _identityItem;
+        Forms.ToolStripMenuItem signInItem = _signInItem;
+
+        var status = await _authenticator.DescribeStatusAsync();
+        Dispatcher.Invoke(() =>
+        {
+            identityItem.Text = status.User is { Length: > 0 } user
+                ? $"Signed in as {user}"
+                : status.Integrated ? "Signed in" : "Not signed in";
+            signInItem.Visible = status.CanSignIn;
+        });
+    }
+
     private async Task SyncAsync()
     {
-        if (_coordinator is null || _notifyIcon is null)
+        if (_coordinator is null || _notifyIcon is null || _balloonIcon is null)
         {
             return;
         }
 
         var outcome = await _coordinator.RunOnceAsync();
-        // ToolTipIcon.None suppresses the generic system info/warning glyph so
-        // Windows shows our own tray icon (the logo) in the notification instead.
-        // Success/failure is conveyed in the wording rather than a system badge.
-        if (outcome.Ok)
-        {
-            _notifyIcon.ShowBalloonTip(
-                3000, Branding.ProductName, $"{outcome.PrinterCount} printer(s) in sync.", Forms.ToolTipIcon.None);
-        }
-        else
-        {
-            _notifyIcon.ShowBalloonTip(
-                5000, Branding.ProductName, $"Sync failed — {outcome.Error}", Forms.ToolTipIcon.None);
-        }
+        // TrayBalloon shows our logo (NIIF_USER) in the notification instead of
+        // the generic Windows info/warning glyph; success vs failure reads from
+        // the wording.
+        var message = outcome.Ok
+            ? $"{outcome.PrinterCount} printer(s) in sync."
+            : $"Sync failed — {outcome.Error}";
+        TrayBalloon.Show(_notifyIcon, Branding.ProductName, message, _balloonIcon, outcome.Ok ? 3000 : 5000);
     }
 
     protected override void OnExit(ExitEventArgs e)
@@ -113,6 +154,7 @@ public partial class App : Application
             _notifyIcon.Dispose();
         }
         _trayIcon?.Dispose();
+        _balloonIcon?.Dispose();
 
         _coordinator?.Dispose();
         base.OnExit(e);
@@ -120,9 +162,15 @@ public partial class App : Application
 
     /// <summary>Stamped at build time via -p:Version=&lt;tag&gt; in CI.</summary>
     private static string GetVersion()
-        => typeof(App).Assembly
-            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?
-            .InformationalVersion
-        ?? typeof(App).Assembly.GetName().Version?.ToString()
-        ?? "(unknown)";
+    {
+        var raw = typeof(App).Assembly
+                .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?
+                .InformationalVersion
+            ?? typeof(App).Assembly.GetName().Version?.ToString()
+            ?? "(unknown)";
+
+        // Drop any build metadata the SDK appends (e.g. "0.5.0+<git-sha>").
+        var plus = raw.IndexOf('+');
+        return plus >= 0 ? raw[..plus] : raw;
+    }
 }

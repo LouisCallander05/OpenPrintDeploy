@@ -1,8 +1,22 @@
 using System.Net;
 using System.Net.Http;
+using System.Security.Principal;
 using OpenPrintDeploy.Client.Core;
 
 namespace OpenPrintDeploy.Client.Tray;
+
+/// <summary>
+/// How the tray is authenticating right now, for the menu to display.
+/// </summary>
+/// <param name="Integrated">True when using the signed-in Windows identity
+/// (Kerberos / Integrated Auth) — i.e. a domain- or Entra-joined machine.</param>
+/// <param name="User">The account label to show: the Windows user when
+/// integrated, otherwise the stored domain account (null if none saved).</param>
+public readonly record struct AuthStatus(bool Integrated, string? User)
+{
+    /// <summary>Only standalone machines surface a "Sign in" action.</summary>
+    public bool CanSignIn => !Integrated;
+}
 
 /// <summary>
 /// Decides how the tray authenticates to the server and builds the matching
@@ -67,6 +81,34 @@ public sealed class TrayAuthenticator
     /// <summary>The manual "Sign in…" tray action: always prompts.</summary>
     public HttpClient? SignInInteractive()
         => ReAuthenticate("Enter the domain account this PC should use.");
+
+    /// <summary>
+    /// Describes the current sign-in state for the tray menu: whether we use the
+    /// signed-in Windows identity (Kerberos) and which account that is, or — on a
+    /// standalone machine — the stored domain account, if any. The domain-join
+    /// probe shells out to <c>dsregcmd</c>, so it's run off the UI thread.
+    /// </summary>
+    public async Task<AuthStatus> DescribeStatusAsync()
+    {
+        var integrated = await Task.Run(DomainJoin.IsIntegratedAuthAvailable).ConfigureAwait(false);
+        if (integrated)
+        {
+            string? user = null;
+            try
+            {
+                user = WindowsIdentity.GetCurrent().Name;
+            }
+            catch
+            {
+                // Best-effort label only; leave it null if the identity is unreadable.
+            }
+
+            return new AuthStatus(Integrated: true, User: user);
+        }
+
+        var stored = WindowsCredentialStore.TryRead(_credentialTarget);
+        return new AuthStatus(Integrated: false, User: stored?.User);
+    }
 
     private NetworkCredential? ReadStored()
     {
