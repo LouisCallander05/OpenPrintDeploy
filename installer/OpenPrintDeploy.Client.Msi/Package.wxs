@@ -8,9 +8,12 @@
   The server URL is configured one of two ways, both surviving into Intune:
     * msiexec property:  msiexec /i "OpenPrintDeploy.Client.msi" SERVER="http://host:5080"
     * the MSI filename:  name it "OpenPrintDeploy - host.msi" and the tray derives
-      http://host:5080 from it. The MSI records its own path (OriginalDatabase)
-      and the SERVER property in the registry; the tray reads them at startup
-      (see TraySettings.cs). No custom action needed.
+      http://host:5080 from it (TraySettings reads the recorded OriginalDatabase).
+
+  After install it launches the tray in the signed-in user's session (via a
+  post-install action that runs the tray with --launch-active-session as SYSTEM);
+  with no one logged in (e.g. an Intune ESP install) it no-ops and the Run key
+  starts the tray at next logon. A Start Menu shortcut allows a manual launch.
 
   Built by scripts/Publish-Client-Msi.ps1, which harvests the self-contained
   win-x64 tray publish folder passed as $(var.HarvestDir).
@@ -33,18 +36,22 @@
 
     <MediaTemplate EmbedCab="yes" />
 
+    <!-- Logo shown in Add/Remove Programs (and the install UI). -->
+    <Icon Id="OpdClientIcon" SourceFile="..\..\src\OpenPrintDeploy.Client.Tray\Assets\appicon.ico" />
+    <Property Id="ARPPRODUCTICON" Value="OpdClientIcon" />
     <Property Id="ARPHELPLINK" Value="https://github.com/OpenPrintDeploy/OpenPrintDeploy" />
 
     <!-- Optional server URL. msiexec /i ... SERVER="http://host:5080". When blank,
-         the tray derives the server from this MSI's filename (recorded below as
-         InstallerSource). Public + Secure so it passes through to the deferred
-         (system-context) install. -->
+         the tray derives the server from this MSI's filename. Public + Secure so
+         it passes through to the deferred (system-context) install. -->
     <Property Id="SERVER" Secure="yes" />
 
     <Feature Id="Main" Title="Open Print Deploy Client" Level="1">
       <ComponentGroupRef Id="TrayFiles" />
+      <ComponentRef Id="TrayExeComponent" />
       <ComponentRef Id="ClientConfig" />
       <ComponentRef Id="AutoStartRunKey" />
+      <ComponentRef Id="TrayShortcut" />
     </Feature>
 
     <!-- C:\Program Files\OpenPrintDeploy\Tray -->
@@ -54,24 +61,34 @@
       </Directory>
     </StandardDirectory>
 
+    <!-- Start Menu folder for the manual-launch shortcut. -->
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="AppProgramMenuDir" Name="OpenPrintDeploy" />
+    </StandardDirectory>
+
     <!-- Terminate any running tray so its files aren't locked during an upgrade
-         (each user session has its own tray.exe; this is the MSI equivalent of
-         the old installer's KillRunningTray). No reboot prompt. -->
+         (each user session has its own tray.exe). No reboot prompt. -->
     <util:CloseApplication
         Id="CloseTray"
         Target="OpenPrintDeploy.Client.Tray.exe"
         TerminateProcess="0"
         RebootPrompt="no" />
 
-    <!-- All self-contained tray files. -->
+    <!-- All tray files EXCEPT the exe, which is authored explicitly below so the
+         post-install launch action and the shortcut can reference it by id. -->
     <ComponentGroup Id="TrayFiles" Directory="INSTALLFOLDER">
-      <Files Include="$(var.HarvestDir)\**" />
+      <Files Include="$(var.HarvestDir)\**">
+        <Exclude Files="$(var.HarvestDir)\OpenPrintDeploy.Client.Tray.exe" />
+      </Files>
     </ComponentGroup>
 
-    <!-- Config the tray reads at startup: the explicit SERVER (if any), this
-         MSI's own path (for the filename-derived server), and a version marker.
-         Version is the keypath so it's always present. -->
     <DirectoryRef Id="INSTALLFOLDER">
+      <Component Id="TrayExeComponent" Bitness="always64">
+        <File Id="TrayExe" Source="$(var.HarvestDir)\OpenPrintDeploy.Client.Tray.exe" KeyPath="yes" />
+      </Component>
+
+      <!-- Config the tray reads at startup: the explicit SERVER (if any), this
+           MSI's own path (for the filename-derived server), and a version marker. -->
       <Component Id="ClientConfig" Bitness="always64">
         <RegistryValue Root="HKLM" Key="SOFTWARE\OpenPrintDeploy\Client"
                        Name="Version" Type="string" Value="$(var.ProductVersion)" KeyPath="yes" />
@@ -80,17 +97,50 @@
         <RegistryValue Root="HKLM" Key="SOFTWARE\OpenPrintDeploy\Client"
                        Name="InstallerSource" Type="string" Value="[OriginalDatabase]" />
       </Component>
-    </DirectoryRef>
 
-    <!-- Per-machine auto-start: the tray launches for every user at logon. Same
-         Run value name as the EXE installer so the two never double-register. -->
-    <DirectoryRef Id="INSTALLFOLDER">
+      <!-- Per-machine auto-start: the tray launches for every user at logon. Same
+           Run value name as the EXE installer so the two never double-register. -->
       <Component Id="AutoStartRunKey" Bitness="always64">
         <RegistryValue Root="HKLM" Key="SOFTWARE\Microsoft\Windows\CurrentVersion\Run"
                        Name="OpenPrintDeployTray" Type="string"
                        Value="&quot;[INSTALLFOLDER]OpenPrintDeploy.Client.Tray.exe&quot;" KeyPath="yes" />
       </Component>
     </DirectoryRef>
+
+    <!-- Start Menu shortcut for a manual launch. Start Menu is a per-user
+         location, so the component keypath must be HKCU (WiX shortcut pattern /
+         ICE38), even though the package is per-machine. -->
+    <DirectoryRef Id="AppProgramMenuDir">
+      <Component Id="TrayShortcut" Guid="D3A8F1C2-5B6E-4079-9C1A-2E4F6B8D0A55">
+        <Shortcut Id="TrayStartMenuShortcut"
+            Name="Open Print Deploy Client"
+            Description="Sync your printers from the print server"
+            Target="[#TrayExe]"
+            WorkingDirectory="INSTALLFOLDER"
+            Icon="OpdClientIcon" />
+        <RemoveFolder Id="RemoveAppProgramMenuDir" On="uninstall" />
+        <RegistryValue Root="HKCU" Key="Software\OpenPrintDeploy\Client"
+                       Name="TrayShortcutInstalled" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <!-- Bring the tray up now, in the signed-in user's session. Deferred +
+         Impersonate=no = runs as SYSTEM, so it can CreateProcessAsUser into the
+         console session (the tray routes --launch-active-session to that). Fired
+         after WriteRegistryValues so the spawned tray finds its server config,
+         and asyncNoWait so a headless launch can never stall the install — a
+         failure (or no one logged in) just means the Run key starts it at next
+         logon. Skipped on uninstall (NOT REMOVE). -->
+    <CustomAction Id="LaunchTraySession"
+        FileRef="TrayExe"
+        ExeCommand="--launch-active-session"
+        Execute="deferred"
+        Impersonate="no"
+        Return="asyncNoWait" />
+
+    <InstallExecuteSequence>
+      <Custom Action="LaunchTraySession" After="WriteRegistryValues" Condition="NOT REMOVE" />
+    </InstallExecuteSequence>
 
   </Package>
 </Wix>

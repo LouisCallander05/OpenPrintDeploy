@@ -19,9 +19,24 @@ public partial class App : Application
     private Forms.ToolStripMenuItem? _signInItem;
     private DispatcherTimer? _timer;
 
+    /// <summary>
+    /// CLI flag the MSI's post-install action passes (as SYSTEM) to bring the
+    /// tray up in the signed-in user's session right after install.
+    /// </summary>
+    private const string LaunchActiveSessionArg = "--launch-active-session";
+
     protected override async void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
+
+        // Launch-now path: spawn the tray in the interactive session and exit
+        // immediately — never build the UI in this (possibly session-0) process.
+        if (e.Args.Any(a => string.Equals(a, LaunchActiveSessionArg, StringComparison.OrdinalIgnoreCase)))
+        {
+            TraySessionLauncher.LaunchInteractive();
+            Shutdown(0);
+            return;
+        }
 
         TraySettings settings;
         try
