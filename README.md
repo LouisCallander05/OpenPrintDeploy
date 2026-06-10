@@ -37,7 +37,7 @@ src/
   OpenPrintDeploy.Client.Core     # Cross-platform sync/reconcile logic
   OpenPrintDeploy.Client.Tray     # WPF tray app — user session, applies printers
 installer/
-  OpenPrintDeploy.Installer       # Per-machine installer for the server
+  OpenPrintDeploy.Server.Msi      # WiX per-machine MSI for the server
   OpenPrintDeploy.Client.Installer # Per-machine installer for the tray (Intune-deployable)
 docs/
 OpenPrintDeploy.sln
@@ -80,24 +80,25 @@ From this repo on a dev machine with the .NET 8 SDK:
 .\scripts\Publish-Server.ps1
 ```
 
-This produces a self-contained `win-x64` build in `publish/server/`, with
-`Install-Service.ps1` and `Uninstall-Service.ps1` bundled alongside the exe.
-The target machine doesn't need the .NET 8 hosting bundle installed.
+This produces a single per-machine MSI at `publish/OpenPrintDeploy.Server.msi`,
+built with the [WiX Toolset][wix] from a self-contained `win-x64` publish (the
+WiX SDK and extensions restore from NuGet automatically — no global tool to
+install). The target machine doesn't need the .NET 8 hosting bundle.
 
-Copy `publish/server/` to the print server. Then either:
+Copy `OpenPrintDeploy.Server.msi` to the print server, then install it — either:
 
-- **Right-click `OpenPrintDeploy.Installer.exe` → Run as administrator** (the
-  exe carries a `requireAdministrator` manifest, so UAC prompts automatically).
-  The installer is a small native .NET console app — EDR products that block
-  PowerShell scripts by default (Cylance, etc.) won't reject it.
-- Or, if your environment allows PowerShell, run `.\Install-Service.ps1` from
-  an elevated prompt. Both do exactly the same work.
+- **Double-click it** (UAC elevates automatically), or
+- Silently / scripted: `msiexec /i OpenPrintDeploy.Server.msi /quiet`
 
-That registers `OpenPrintDeployServer` as a Windows service (Local SYSTEM,
-autostart), adds a firewall rule on TCP 5080, and starts it. The database
-lives at `C:\ProgramData\OpenPrintDeploy\app.db` and survives reinstalls.
+`msiexec` isn't subject to PowerShell script-block policies, so EDR products
+that block PowerShell by default (Cylance, etc.) won't reject it. The MSI
+installs to `C:\Program Files\OpenPrintDeploy`, registers `OpenPrintDeployServer`
+as a Windows service (Local SYSTEM, autostart, restart-on-failure), opens TCP
+5080 in the firewall, adds a Start Menu shortcut (**OpenPrintDeploy →
+OpenPrintDeploy Admin**), and starts the service. The database lives at
+`C:\ProgramData\OpenPrintDeploy\app.db` and survives upgrades and uninstalls.
 
-Then from a workstation:
+Open the admin UI from the Start Menu shortcut, or from a workstation:
 
 ```
 http://<print-server>:5080/admin/directory
@@ -107,12 +108,19 @@ Click **Test connection**. If LDAP, DC and search base auto-resolve and the
 bind succeeds, you're done. Logs go to **Event Viewer → Windows Logs →
 Application** (source: `OpenPrintDeployServer`).
 
-To remove:
+To upgrade, just install a newer MSI — it replaces the prior version in place
+and keeps the database. To remove, use **Settings → Apps** (or **Add/Remove
+Programs**), or:
 
 ```cmd
-OpenPrintDeploy.Installer.exe --uninstall                 :: leaves DB + install dir
-OpenPrintDeploy.Installer.exe --uninstall --remove-data   :: also wipes them
+msiexec /x OpenPrintDeploy.Server.msi          :: or "Uninstall" from Apps
 ```
+
+Uninstall stops and removes the service and firewall rule. The database under
+`C:\ProgramData\OpenPrintDeploy` is left in place; delete that folder by hand if
+you want a clean wipe.
+
+[wix]: https://wixtoolset.org/
 
 ## Endpoints: the tray client
 

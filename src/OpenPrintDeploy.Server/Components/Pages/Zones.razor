@@ -1,5 +1,7 @@
 @page "/zones"
-@rendermode InteractiveServer
+@* prerender:false — this page does directory (LDAP) work in OnInitialized;
+   prerendering would run that twice (once server-side, once on the circuit). *@
+@rendermode @(new InteractiveServerRenderMode(prerender: false))
 @attribute [Authorize(Policy = AuthPolicies.Admin)]
 @using OpenPrintDeploy.Server.Admin
 @using OpenPrintDeploy.Server.Data.Entities
@@ -172,15 +174,50 @@ else
     private bool _showForm;
     private bool _saving;
     private string? _error;
+    private bool _groupCatalogLoaded;
 
-    protected override async Task OnInitializedAsync() => await ReloadAsync();
+    // Initial load: only the DB-backed data the zones table needs, so it
+    // renders immediately. The group-name labels (LDAP) are filled in after
+    // first render, and the full group catalog is fetched lazily when the
+    // add/edit form opens — neither blocks the table.
+    protected override async Task OnInitializedAsync()
+    {
+        _zones = await ZoneService.GetAllAsync();
+        _allPrinters = await PrinterService.GetAllAsync();
+    }
 
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await ResolveZoneGroupNamesAsync();
+            StateHasChanged();
+        }
+    }
+
+    // Used after a save/delete to refresh in place. Name resolution is cached
+    // in the directory service after the first load, so the inline call here is
+    // cheap; the catalog is only reloaded if the form is reopened.
     private async Task ReloadAsync()
     {
         _zones = await ZoneService.GetAllAsync();
         _allPrinters = await PrinterService.GetAllAsync();
-        await LoadGroupsAsync();
         await ResolveZoneGroupNamesAsync();
+    }
+
+    /// <summary>
+    /// Loads the group catalog (for the rule-picker datalist) on demand — the
+    /// first time the add/edit form is opened — instead of on every page load.
+    /// Cached behind <see cref="_groupCatalogLoaded"/> for the page's lifetime.
+    /// </summary>
+    private async Task EnsureGroupCatalogAsync()
+    {
+        if (_groupCatalogLoaded)
+        {
+            return;
+        }
+        await LoadGroupsAsync();
+        _groupCatalogLoaded = true;
     }
 
     /// <summary>
@@ -288,12 +325,13 @@ else
         StateHasChanged();
     }
 
-    private void StartCreate()
+    private async Task StartCreate()
     {
         _error = null;
         _editingId = null;
         _model = new ZoneInput { Rules = { new RuleInput() } };
         _showForm = true;
+        await EnsureGroupCatalogAsync();
     }
 
     private async Task StartEditAsync(Guid id)
@@ -307,6 +345,7 @@ else
             return;
         }
 
+        await EnsureGroupCatalogAsync();
         _editingId = zone.Id;
         _model = new ZoneInput
         {

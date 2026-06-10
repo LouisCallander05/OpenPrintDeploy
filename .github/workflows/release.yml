@@ -6,8 +6,8 @@ name: release
 #   git tag v0.2.0
 #   git push origin v0.2.0
 #
-# ...then watch the Actions tab; when green, the Release page has both zips:
-#   OpenPrintDeploy-server-win-x64.zip   <- copy to the print server, install
+# ...then watch the Actions tab; when green, the Release page has:
+#   OpenPrintDeploy.Server.msi           <- copy to the print server, install
 #   OpenPrintDeploy-client-win-x64.zip   <- deploy via Intune to endpoints
 
 on:
@@ -40,7 +40,7 @@ jobs:
       - name: Build + test
         run: dotnet test OpenPrintDeploy.sln -c Release -p:NuGetAudit=true --nologo
 
-      - name: Publish server + installer
+      - name: Build server MSI
         run: .\scripts\Publish-Server.ps1 -Version "${{ steps.ver.outputs.version }}"
         shell: powershell
 
@@ -48,23 +48,19 @@ jobs:
         run: .\scripts\Publish-Client.ps1 -Version "${{ steps.ver.outputs.version }}"
         shell: powershell
 
-      - name: Zip artifacts
+      - name: Zip client artifact
         shell: powershell
         run: |
-          Compress-Archive `
-            -Path publish\server\* `
-            -DestinationPath publish\OpenPrintDeploy-server-win-x64.zip `
-            -CompressionLevel Optimal
           Compress-Archive `
             -Path publish\client\* `
             -DestinationPath publish\OpenPrintDeploy-client-win-x64.zip `
             -CompressionLevel Optimal
 
-      - name: Create Release + upload zips
+      - name: Create Release + upload assets
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            publish/OpenPrintDeploy-server-win-x64.zip
+            publish/OpenPrintDeploy.Server.msi
             publish/OpenPrintDeploy-client-win-x64.zip
           draft: false
           prerelease: false

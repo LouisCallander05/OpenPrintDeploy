@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.DirectoryServices.ActiveDirectory;
 using System.DirectoryServices.Protocols;
 using System.Globalization;
@@ -21,6 +22,26 @@ public sealed class LdapDirectoryService : IDirectoryService
     private readonly ILogger<LdapDirectoryService> _logger;
     private readonly Lazy<Endpoint> _endpoint;
 
+    // This service is a singleton, so these caches live for the process. Each
+    // LDAP lookup opens a fresh bound connection (a Kerberos handshake), so the
+    // admin UI — which resolves the same group SIDs and re-fetches the same
+    // catalog on every Zones page load — pays that cost repeatedly without them.
+    //
+    // SID -> friendly name. Group names change rarely; a generous TTL keeps the
+    // zones table and rule labels instant after the first resolve.
+    private readonly ConcurrentDictionary<string, CacheEntry<string>> _nameCache =
+        new(StringComparer.OrdinalIgnoreCase);
+    private static readonly TimeSpan NameCacheTtl = TimeSpan.FromMinutes(10);
+
+    // The empty-query catalog (the first-N groups seeding the rule picker). A
+    // short TTL absorbs repeat page loads and the prerender+interactive
+    // double-render without going stale on real directory changes for long.
+    private readonly object _catalogLock = new();
+    private List<DirectoryGroup>? _catalog;
+    private int _catalogLimit;
+    private DateTime _catalogExpiresUtc;
+    private static readonly TimeSpan CatalogCacheTtl = TimeSpan.FromSeconds(60);
+
     public LdapDirectoryService(IOptions<DirectoryOptions> options, ILogger<LdapDirectoryService> logger)
     {
         _ldap = options.Value.Ldap;
@@ -30,6 +51,8 @@ public sealed class LdapDirectoryService : IDirectoryService
 
     /// <summary>Resolved DC hostname + search-base DN, after auto-discovery.</summary>
     private sealed record Endpoint(string Server, string SearchBase);
+
+    private readonly record struct CacheEntry<T>(T Value, DateTime ExpiresUtc);
 
     public async Task<IReadOnlySet<string>> GetGroupSidsAsync(string username, CancellationToken ct = default)
     {
@@ -53,9 +76,32 @@ public sealed class LdapDirectoryService : IDirectoryService
     public async Task<IReadOnlyList<DirectoryGroup>> SearchGroupsAsync(
         string query, int limit, CancellationToken ct = default)
     {
+        var trimmed = query?.Trim() ?? string.Empty;
+
+        // Empty-query catalog fetches are the per-page-load cost; serve a fresh
+        // enough cached copy when one is available.
+        if (trimmed.Length == 0 && TryGetCatalog(limit, out var cached))
+        {
+            return cached;
+        }
+
         try
         {
-            return await Task.Run(() => SearchGroups(query?.Trim() ?? string.Empty, limit), ct);
+            var results = await Task.Run(() => SearchGroups(trimmed, limit), ct);
+
+            // Every group we just listed is a free SID->name resolution for the
+            // zones table and rule labels — warm the cache with them.
+            foreach (var group in results)
+            {
+                CacheName(group.Sid, group.Name);
+            }
+
+            if (trimmed.Length == 0)
+            {
+                StoreCatalog(limit, results);
+            }
+
+            return results;
         }
         catch (Exception ex)
         {
@@ -71,14 +117,66 @@ public sealed class LdapDirectoryService : IDirectoryService
             return null;
         }
 
+        var key = sid.Trim();
+        if (TryGetCachedName(key, out var name))
+        {
+            return name;
+        }
+
         try
         {
-            return await Task.Run(() => ResolveGroupName(sid.Trim()), ct);
+            var resolved = await Task.Run(() => ResolveGroupName(key), ct);
+            if (!string.IsNullOrWhiteSpace(resolved))
+            {
+                CacheName(key, resolved!);
+            }
+
+            return resolved;
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "LDAP name resolution failed for {Sid}; showing the raw SID.", sid);
             return null;
+        }
+    }
+
+    private bool TryGetCachedName(string sid, out string? name)
+    {
+        if (_nameCache.TryGetValue(sid, out var entry) && entry.ExpiresUtc > DateTime.UtcNow)
+        {
+            name = entry.Value;
+            return true;
+        }
+
+        name = null;
+        return false;
+    }
+
+    private void CacheName(string sid, string name)
+        => _nameCache[sid] = new CacheEntry<string>(name, DateTime.UtcNow + NameCacheTtl);
+
+    private bool TryGetCatalog(int limit, out IReadOnlyList<DirectoryGroup> catalog)
+    {
+        lock (_catalogLock)
+        {
+            if (_catalog is not null && _catalogLimit == limit && _catalogExpiresUtc > DateTime.UtcNow)
+            {
+                catalog = _catalog;
+                return true;
+            }
+        }
+
+        catalog = [];
+        return false;
+    }
+
+    private void StoreCatalog(int limit, IReadOnlyList<DirectoryGroup> results)
+    {
+        lock (_catalogLock)
+        {
+            _catalog = results.ToList();
+            _catalogLimit = limit;
+            _catalogExpiresUtc = DateTime.UtcNow + CatalogCacheTtl;
         }
     }
 

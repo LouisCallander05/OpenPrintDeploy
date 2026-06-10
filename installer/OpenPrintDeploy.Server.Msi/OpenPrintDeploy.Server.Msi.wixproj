@@ -1,0 +1,35 @@
+<Project Sdk="WixToolset.Sdk/5.0.2">
+
+  <PropertyGroup>
+    <OutputName>OpenPrintDeploy.Server</OutputName>
+    <OutputType>Package</OutputType>
+    <!-- x64 MSI: components land in Program Files (not the x86 folder) and the
+         service exe matches the win-x64 self-contained publish. -->
+    <Platform>x64</Platform>
+
+    <!-- Repo-root Directory.Build.props sets TreatWarningsAsErrors=true for the
+         C# projects; the WiX SDK maps that to -wx, where benign harvest/link
+         warnings would fail the build. Opt this project back out. -->
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+
+    <!-- Publish-Server.ps1 passes these on the dotnet build command line:
+           -p:HarvestDir=<abs path to the self-contained publish folder>
+           -p:ProductVersion=<numeric major.minor.build>
+         Defaults keep a bare `dotnet build` working for quick local checks. -->
+    <HarvestDir Condition="'$(HarvestDir)' == ''">$(MSBuildThisFileDirectory)..\..\publish\server</HarvestDir>
+    <ProductVersion Condition="'$(ProductVersion)' == ''">0.0.0</ProductVersion>
+
+    <!-- Surface both as WiX preprocessor variables ($(var.Name) in the .wxs). -->
+    <DefineConstants>HarvestDir=$(HarvestDir);ProductVersion=$(ProductVersion)</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- ServiceConfig failure-recovery + InternetShortcut (Util), the inbound
+         firewall rule (Firewall), and the WixUI_Minimal dialog set (UI). All
+         restore from NuGet during `dotnet build`; no global wix tool needed. -->
+    <PackageReference Include="WixToolset.Util.wixext" Version="5.0.2" />
+    <PackageReference Include="WixToolset.Firewall.wixext" Version="5.0.2" />
+    <PackageReference Include="WixToolset.UI.wixext" Version="5.0.2" />
+  </ItemGroup>
+
+</Project>

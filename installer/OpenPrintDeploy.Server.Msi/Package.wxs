@@ -1,0 +1,139 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Per-machine MSI for OpenPrintDeploy.Server.
+
+  Replaces the old console-exe + PowerShell installers. msiexec is not subject
+  to PowerShell script-block policies, so this keeps the EDR-friendliness that
+  motivated the native exe while giving a real Add/Remove Programs entry,
+  rollback, and clean major-upgrade handling.
+
+  Built by scripts/Publish-Server.ps1, which harvests the self-contained
+  win-x64 publish folder passed as $(var.HarvestDir). The service exe is
+  authored explicitly (below) so it can own the ServiceInstall/ServiceControl
+  and firewall rule; every other file is wildcard-harvested.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util"
+     xmlns:fw="http://wixtoolset.org/schemas/v4/wxs/firewall"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+
+  <Package
+      Name="OpenPrintDeploy Server"
+      Manufacturer="OpenPrintDeploy"
+      Version="$(var.ProductVersion)"
+      Scope="perMachine"
+      Compressed="yes"
+      InstallerVersion="500"
+      UpgradeCode="7E4D2A6C-1F3B-4C9E-9A2D-8B5F0C7E1A44">
+
+    <!-- Block downgrades; allow same-version reinstall (repair). The fixed
+         UpgradeCode above MUST never change or upgrades stop chaining. -->
+    <MajorUpgrade
+        AllowSameVersionUpgrades="yes"
+        DowngradeErrorMessage="A newer version of OpenPrintDeploy Server is already installed. Uninstall it first to install an older build." />
+
+    <!-- Single self-contained .msi (cab embedded). -->
+    <MediaTemplate EmbedCab="yes" />
+
+    <Property Id="ARPHELPLINK" Value="https://github.com/OpenPrintDeploy/OpenPrintDeploy" />
+
+    <Feature Id="Main" Title="OpenPrintDeploy Server" Level="1">
+      <ComponentGroupRef Id="ServerFiles" />
+      <ComponentRef Id="ServerExe" />
+      <ComponentRef Id="AdminShortcut" />
+    </Feature>
+
+    <!-- Install root: C:\Program Files\OpenPrintDeploy. The service's content
+         root resolves here, so the bundled client/ installer that the server
+         serves at /download/client is found relative to it (same as before). -->
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="OpenPrintDeploy" />
+    </StandardDirectory>
+
+    <!-- Start Menu folder for the admin-UI shortcut. -->
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Directory Id="AppProgramMenuDir" Name="OpenPrintDeploy" />
+    </StandardDirectory>
+
+    <!-- Everything in the publish folder EXCEPT the service exe (authored
+         explicitly below). Subfolders, including client/, are preserved. -->
+    <ComponentGroup Id="ServerFiles" Directory="INSTALLFOLDER">
+      <Files Include="$(var.HarvestDir)\**"
+             Exclude="$(var.HarvestDir)\OpenPrintDeploy.Server.exe" />
+    </ComponentGroup>
+
+    <!-- The service exe: hosts the Windows service registration, failure
+         recovery, and the inbound firewall rule on TCP 5080. -->
+    <DirectoryRef Id="INSTALLFOLDER">
+      <Component Id="ServerExe" Bitness="always64">
+        <File Id="ServerExeFile"
+              Source="$(var.HarvestDir)\OpenPrintDeploy.Server.exe"
+              KeyPath="yes" />
+
+        <ServiceInstall
+            Id="OpenPrintDeployServerSvc"
+            Name="OpenPrintDeployServer"
+            DisplayName="OpenPrintDeploy Server"
+            Description="OpenPrintDeploy admin server + /sync API for zone-driven printer deployment."
+            Type="ownProcess"
+            Start="auto"
+            ErrorControl="normal"
+            Account="LocalSystem"
+            Vital="yes">
+          <!-- Mirrors the old `sc failure`: restart after 60s twice, then give
+               up; reset the failure counter once a day. -->
+          <util:ServiceConfig
+              FirstFailureActionType="restart"
+              SecondFailureActionType="restart"
+              ThirdFailureActionType="none"
+              RestartServiceDelayInSeconds="60"
+              ResetPeriodInDays="1" />
+        </ServiceInstall>
+
+        <!-- Start on install, stop on install/uninstall, remove on uninstall. -->
+        <ServiceControl
+            Id="OpenPrintDeployServerSvcControl"
+            Name="OpenPrintDeployServer"
+            Start="install"
+            Stop="both"
+            Remove="uninstall"
+            Wait="yes" />
+
+        <fw:FirewallException
+            Id="OpenPrintDeployFw5080"
+            Name="OpenPrintDeploy (5080/tcp)"
+            Port="5080"
+            Protocol="tcp"
+            Scope="any" />
+      </Component>
+    </DirectoryRef>
+
+    <!-- Start Menu shortcut to the admin UI. It's a .url internet shortcut
+         (the target is a web address, not an exe). localhost is correct because
+         the shortcut lives on the server itself, independent of hostname/DNS.
+         Per-machine install -> HKLM keypath for the component. -->
+    <DirectoryRef Id="AppProgramMenuDir">
+      <Component Id="AdminShortcut" Guid="9C2F7B30-5E84-4A1D-B6C2-3F0A9D4E7B12">
+        <util:InternetShortcut
+            Id="AdminUrlShortcut"
+            Name="OpenPrintDeploy Admin"
+            Target="http://localhost:5080/"
+            Type="url" />
+        <RemoveFolder Id="RemoveAppProgramMenuDir" On="uninstall" />
+        <RegistryValue
+            Root="HKLM"
+            Key="Software\OpenPrintDeploy"
+            Name="AdminShortcutInstalled"
+            Type="integer"
+            Value="1"
+            KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <!-- Minimal GUI on double-click (license + progress + finish); silent
+         `msiexec /i ... /quiet` still works for Intune/scripted installs. -->
+    <ui:WixUI Id="WixUI_Minimal" />
+    <WixVariable Id="WixUILicenseRtf" Value="License.rtf" />
+
+  </Package>
+</Wix>
