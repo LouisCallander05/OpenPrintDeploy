@@ -17,7 +17,7 @@ public sealed class TraySettings
     public static TraySettings Load()
     {
         var url = Environment.GetEnvironmentVariable("OPD_SERVER_URL");
-        var intervalMinutes = 60;
+        var intervalMinutes = 5;
 
         var path = Path.Combine(AppContext.BaseDirectory, "appsettings.json");
         if (File.Exists(path))

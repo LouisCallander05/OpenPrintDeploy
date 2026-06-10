@@ -202,7 +202,7 @@ internal static class ClientInstaller
             }
         }
 
-        server["SyncIntervalMinutes"] ??= 60;
+        server["SyncIntervalMinutes"] ??= 5;
         root["Server"] = server;
 
         File.WriteAllText(

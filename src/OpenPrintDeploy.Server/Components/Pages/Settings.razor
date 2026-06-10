@@ -87,7 +87,7 @@
     </div>
 </div>
 
-<button class="btn btn-primary" @onclick="SaveAsync" disabled="@_busy">Save</button>
+<button class="btn btn-primary" @onclick="SaveAsync" disabled="@_busy">@(_confirmSave ? "Save anyway" : "Save")</button>
 
 @code {
     private readonly List<string> _groups = [];
@@ -98,6 +98,7 @@
     private string? _groupError;
     private string? _message;
     private bool _busy;
+    private bool _confirmSave;
 
     protected override void OnInitialized()
     {
@@ -131,6 +132,7 @@
                 _groups.Add(name);
             }
 
+            _confirmSave = false;
             _newGroup = string.Empty;
         }
         finally
@@ -143,6 +145,7 @@
     {
         _groups.RemoveAll(g => g.Equals(group, StringComparison.OrdinalIgnoreCase));
         _message = null;
+        _confirmSave = false;
     }
 
     private void AddUser()
@@ -159,6 +162,7 @@
             _users.Add(name);
         }
 
+        _confirmSave = false;
         _newUser = string.Empty;
     }
 
@@ -174,6 +178,7 @@
     {
         _users.RemoveAll(u => u.Equals(user, StringComparison.OrdinalIgnoreCase));
         _message = null;
+        _confirmSave = false;
     }
 
     private async Task SaveAsync()
@@ -186,19 +191,27 @@
             var prospective = new AdminAccess(_groups.ToList(), _users.ToList());
             var effective = Evaluator.Combine(prospective);
 
-            // Refuse to save a config that would lock the current admin out.
-            if (!effective.IsOpen)
+            // Safety check: warn (don't hard-block) if we can't confirm the
+            // current admin would keep access. Group membership can be
+            // unresolvable across domains, so a false negative here must not stop
+            // a legitimate save — the appsettings break-glass is the real
+            // recovery path. Second click applies anyway.
+            if (!effective.IsOpen && !_confirmSave)
             {
                 var state = await AuthState.GetAuthenticationStateAsync();
                 if (!await Evaluator.IsAdminAsync(state.User, effective))
                 {
-                    _error = "That would remove your own admin access. Add a group you belong to, "
-                           + "or your own username, before saving.";
+                    _confirmSave = true;
+                    _error = "Couldn't confirm your own account is covered by these grants — group "
+                           + "membership may not resolve across domains. Safest is to also add your own "
+                           + "username under Admin users. Otherwise click Save again to apply anyway "
+                           + "(you can always recover via Auth:Admin in appsettings.json).";
                     return;
                 }
             }
 
             Evaluator.SaveStored(prospective);
+            _confirmSave = false;
             _message = effective.IsOpen
                 ? "Saved. No admins are configured yet, so any signed-in user is currently an admin."
                 : "Saved.";

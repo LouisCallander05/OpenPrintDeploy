@@ -65,7 +65,7 @@ public partial class App : Application
         {
             _coordinator?.SignIn();
             _ = RefreshAuthMenuAsync();
-            await SyncAsync();
+            await SyncAsync(manual: true);
         })
         {
             Visible = false,
@@ -73,7 +73,7 @@ public partial class App : Application
         menu.Items.Add(_signInItem);
         menu.Items.Add(new Forms.ToolStripSeparator());
 
-        menu.Items.Add("Sync now", null, async (_, _) => await SyncAsync());
+        menu.Items.Add("Sync now", null, async (_, _) => await SyncAsync(manual: true));
         menu.Items.Add(new Forms.ToolStripSeparator());
         menu.Items.Add($"Server: {settings.ServerBaseAddress}") .Enabled = false;
         menu.Items.Add($"Version: {GetVersion()}").Enabled = false;
@@ -128,7 +128,13 @@ public partial class App : Application
         });
     }
 
-    private async Task SyncAsync()
+    /// <param name="manual">
+    /// True only for an explicit "Sync now" / "Sign in" action. Background syncs
+    /// (logon + the timer) pass false and stay completely silent. We only ever
+    /// notify on a successful manual sync — failures (including "can't reach the
+    /// server") never raise a notification, so an offline device doesn't nag.
+    /// </param>
+    private async Task SyncAsync(bool manual = false)
     {
         if (_coordinator is null || _notifyIcon is null || _balloonIcon is null)
         {
@@ -136,13 +142,12 @@ public partial class App : Application
         }
 
         var outcome = await _coordinator.RunOnceAsync();
-        // TrayBalloon shows our logo (NIIF_USER) in the notification instead of
-        // the generic Windows info/warning glyph; success vs failure reads from
-        // the wording.
-        var message = outcome.Ok
-            ? $"{outcome.PrinterCount} printer(s) in sync."
-            : $"Sync failed — {outcome.Error}";
-        TrayBalloon.Show(_notifyIcon, Branding.ProductName, message, _balloonIcon, outcome.Ok ? 3000 : 5000);
+        if (manual && outcome.Ok)
+        {
+            TrayBalloon.Show(
+                _notifyIcon, Branding.ProductName,
+                $"{outcome.PrinterCount} printer(s) in sync.", _balloonIcon, 3000);
+        }
     }
 
     protected override void OnExit(ExitEventArgs e)
