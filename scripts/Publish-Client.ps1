@@ -3,17 +3,21 @@
 Produces the deployable client artifact: a single self-extracting installer exe.
 
 .DESCRIPTION
-Publishes the Tray as a self-contained win-x64 folder, zips that folder, and
-embeds the zip into the Client installer so the installer publishes as ONE
-self-extracting exe. The operator deploys a single file:
+Publishes the Tray (via Publish-Tray.ps1), zips that folder, and embeds the zip
+into the Client installer so the installer publishes as ONE self-extracting exe.
+The operator deploys a single file:
 
     OpenPrintDeploy.Client.Installer.exe   <- carries the tray inside it
 
 Running it (UAC) extracts the tray to Program Files, configures the server, and
 registers logon auto-start. The server URL can be passed with --server, or
 encoded in the filename — rename the exe to "OpenPrintDeploy - <host>.exe" and
-it configures http://<host>:5080 with no arguments. That's also how the server's
-own download endpoint hands the file out (pre-named for its host).
+it configures http://<host>:5080 with no arguments.
+
+For Intune, prefer the MSI (scripts/Publish-Client-Msi.ps1): Intune auto-fills
+install/uninstall/detection from the MSI, and the same "<name> - <host>"
+filename trick still works (the tray reads the server from the registry the MSI
+writes).
 
 .PARAMETER OutDir
 Where the publish output lands. Relative paths resolve against the repo root.
@@ -42,103 +46,19 @@ $trayDir     = Join-Path $repoRoot "publish/client-tray-tmp"
 $payloadZip  = Join-Path $repoRoot "publish/client-tray-payload.zip"
 
 if (Test-Path $resolvedOut) { Remove-Item -Recurse -Force $resolvedOut }
-if (Test-Path $trayDir)     { Remove-Item -Recurse -Force $trayDir }
 if (Test-Path $payloadZip)  { Remove-Item -Force $payloadZip }
+
+# Publish the self-contained tray (shared with the MSI packager).
+& (Join-Path $PSScriptRoot "Publish-Tray.ps1") `
+    -OutDir $trayDir -Configuration $Configuration -Runtime $Runtime -Version $Version
+if ($LASTEXITCODE -ne 0) { throw "Publish-Tray.ps1 failed (exit $LASTEXITCODE)" }
 
 $versionProps = @()
 if (-not [string]::IsNullOrWhiteSpace($Version)) {
-    Write-Host "Stamping build with version $Version"
     $versionProps = @("-p:Version=$Version")
 }
 
-Push-Location $repoRoot
-try {
-    Write-Host "Publishing tray (self-contained $Runtime) to $trayDir..."
-    & dotnet publish src/OpenPrintDeploy.Client.Tray `
-        -c $Configuration `
-        -r $Runtime `
-        --self-contained true `
-        -p:PublishSingleFile=false `
-        @versionProps `
-        -o $trayDir
-    if ($LASTEXITCODE -ne 0) { throw "dotnet publish (tray) failed (exit $LASTEXITCODE)" }
-}
-finally {
-    Pop-Location
-}
-
-$trayExe = Join-Path $trayDir "OpenPrintDeploy.Client.Tray.exe"
-if (-not (Test-Path $trayExe)) { throw "Tray exe missing from tray publish folder." }
-
-# Catch a class of silently-broken self-contained WPF publishes. If the build
-# config ever drops the WindowsDesktop runtime pack from deps.json again, the
-# tray would launch on a dev box (where the runtime is installed system-wide)
-# but crash with FileNotFoundException for WindowsBase on a clean endpoint.
-# Better to fail the publish here than to ship that to Intune.
-$depsJsonPath = Join-Path $trayDir "OpenPrintDeploy.Client.Tray.deps.json"
-if (-not (Test-Path $depsJsonPath)) { throw "deps.json missing from tray publish -- did the publish silently fail?" }
-$depsRaw = Get-Content $depsJsonPath -Raw
-if ($depsRaw -notmatch 'runtimepack\.Microsoft\.WindowsDesktop\.App\.Runtime') {
-    throw ("Self-contained publish is missing the WindowsDesktop runtime pack in deps.json. " +
-           "Check EnableWindowsTargeting in OpenPrintDeploy.Client.Tray.csproj -- it must NOT be set on Windows.")
-}
-if ($depsRaw -notmatch 'WindowsBase\.dll') {
-    throw "Self-contained publish does not register WindowsBase.dll in deps.json. The bundle will crash on clean machines."
-}
-
-# The publish merges files from both runtime packs (Microsoft.NETCore.App.Runtime
-# and Microsoft.WindowsDesktop.App.Runtime). They share several filenames --
-# the most important being WindowsBase.dll. NETCore.App ships a 16KB legacy
-# facade with AssemblyVersion 4.0.0.0; WindowsDesktop.App ships the real 2.2MB
-# implementation with AssemblyVersion 8.0.0.0. The MSBuild publish target
-# happens to copy NETCore's facade *after* WindowsDesktop's real file, so the
-# bundled WindowsBase ends up as the broken facade. deps.json still says
-# "look up WindowsBase.dll under the WindowsDesktop runtime pack", so the .NET
-# loader asks for Version=8.0.0.0, gets the file but sees Version=4.0.0.0
-# metadata, and the tray crashes at startup on every clean endpoint with
-# "Could not load file or assembly 'WindowsBase'".
-#
-# Fix: after the publish, overlay every DLL the WindowsDesktop runtime pack
-# ships onto the publish output. WindowsDesktop always wins -> the real
-# WindowsBase.dll (and any other overlap) ends up in the bundle.
-$wpfVersionMatch = [regex]::Match($depsRaw, 'runtimepack\.Microsoft\.WindowsDesktop\.App\.Runtime\.win-x64/(?<v>\d+\.\d+\.\d+)')
-if (-not $wpfVersionMatch.Success) {
-    throw "Could not determine the WindowsDesktop runtime pack version from deps.json."
-}
-$wpfVersion = $wpfVersionMatch.Groups['v'].Value
-
-$wpfRuntimePackCandidates = @(
-    (Join-Path $env:USERPROFILE ".nuget\packages\microsoft.windowsdesktop.app.runtime.win-x64\$wpfVersion\runtimes\win-x64\lib\net8.0"),
-    "C:\Program Files\dotnet\packs\Microsoft.WindowsDesktop.App.Runtime.win-x64\$wpfVersion\runtimes\win-x64\lib\net8.0"
-)
-$wpfRuntimePackDir = $wpfRuntimePackCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
-if (-not $wpfRuntimePackDir) {
-    throw ("Could not find WindowsDesktop runtime pack $wpfVersion locally. Searched:`n  " +
-           ($wpfRuntimePackCandidates -join "`n  "))
-}
-
-Write-Host "Overlaying WindowsDesktop runtime pack DLLs from $wpfRuntimePackDir..."
-$overlaid = 0
-Get-ChildItem $wpfRuntimePackDir -Filter *.dll | ForEach-Object {
-    $dest = Join-Path $trayDir $_.Name
-    if (Test-Path $dest) {
-        Copy-Item -Force -LiteralPath $_.FullName -Destination $dest
-        $overlaid++
-    }
-}
-Write-Host "  Overlaid $overlaid DLL(s)."
-
-# Final guard: WindowsBase.dll in the published output must be the real
-# AssemblyVersion 8.0.0.0 implementation, not the 4.0.0.0 facade.
-$wbPath = Join-Path $trayDir "WindowsBase.dll"
-$wbVer  = [System.Reflection.AssemblyName]::GetAssemblyName($wbPath).Version
-if ($wbVer.Major -lt 8) {
-    throw ("Bundled WindowsBase.dll is the wrong version ($wbVer). " +
-           "Expected the AssemblyVersion 8.x.x.x implementation from the WindowsDesktop runtime pack, " +
-           "not the AssemblyVersion 4.0.0.0 facade from the NETCore.App runtime pack.")
-}
-
-# Zip the (now correct) tray folder so it can be embedded in the installer.
+# Zip the tray folder so it can be embedded in the installer.
 # CreateFromDirectory with includeBaseDirectory=false puts the tray's files at
 # the zip root, so the installer extracts them straight into the install dir.
 # Windows PowerShell 5.1 (what CI's `shell: powershell` uses) doesn't auto-load
@@ -189,5 +109,4 @@ Write-Host "Next:" -ForegroundColor Green
 Write-Host "  - Test on a workstation (either form works):"
 Write-Host "      OpenPrintDeploy.Client.Installer.exe install --server http://printsrv01.corp.local:5080"
 Write-Host "      # ...or rename to 'OpenPrintDeploy - printsrv01.corp.local.exe' and just run it"
-Write-Host "  - To deploy via Intune, wrap the single exe as .intunewin:"
-Write-Host "      IntuneWinAppUtil.exe -c $resolvedOut -s OpenPrintDeploy.Client.Installer.exe -o <out>"
+Write-Host "  - For Intune, build the MSI instead: scripts\Publish-Client-Msi.ps1"
