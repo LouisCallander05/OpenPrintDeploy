@@ -22,7 +22,8 @@ public sealed class SyncOrchestratorTests
         Assert.NotNull(applier.Applied);
         Assert.Equal([@"\\srv\a"], applier.Applied!.ToAdd.Select(p => p.UncPath));
         Assert.Equal([@"\\srv\c"], applier.Applied.ToRemove);
-        Assert.Equal([@"\\srv\a", @"\\srv\b"], managedAfter.OrderBy(u => u));
+        Assert.Equal([@"\\srv\a", @"\\srv\b"], managedAfter.ManagedUncs.OrderBy(u => u));
+        Assert.Equal(["HR"], managedAfter.AddedNames);
     }
 
     [Fact]
