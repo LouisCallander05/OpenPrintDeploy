@@ -25,6 +25,15 @@ public interface IDirectoryService
         => Task.FromResult(false);
 
     /// <summary>
+    /// Resolves a group NAME to its SID, searching the whole forest (so an admin
+    /// group in another domain resolves). Returns null if no such group is found
+    /// or the directory can't be reached. The default returns null; real
+    /// providers override it.
+    /// </summary>
+    Task<string?> ResolveGroupSidByNameAsync(string name, CancellationToken ct = default)
+        => Task.FromResult<string?>(null);
+
+    /// <summary>
     /// Groups whose name matches <paramref name="query"/> (a case-insensitive
     /// substring; empty matches the first <paramref name="limit"/> groups),
     /// for the admin zone-rule picker. Returns an empty list if the directory

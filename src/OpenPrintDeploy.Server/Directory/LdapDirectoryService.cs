@@ -42,11 +42,24 @@ public sealed class LdapDirectoryService : IDirectoryService
     private DateTime _catalogExpiresUtc;
     private static readonly TimeSpan CatalogCacheTtl = TimeSpan.FromSeconds(60);
 
+    // Forest-wide endpoints (one per domain) for cross-domain resolution. A user
+    // or admin group can live in a different domain than this server; we resolve
+    // those per-domain over the existing LDAP path. Discovered once and cached.
+    private readonly Lazy<IReadOnlyList<Endpoint>> _forestEndpoints;
+
+    // Group NAME -> SID, populated by ResolveGroupSidByNameAsync. The admin
+    // authorization path resolves the same configured group names on every
+    // request, so a TTL keeps that fast after the first lookup.
+    private readonly ConcurrentDictionary<string, CacheEntry<string>> _sidByNameCache =
+        new(StringComparer.OrdinalIgnoreCase);
+
     public LdapDirectoryService(IOptions<DirectoryOptions> options, ILogger<LdapDirectoryService> logger)
     {
         _ldap = options.Value.Ldap;
         _logger = logger;
         _endpoint = new Lazy<Endpoint>(ResolveEndpoint, LazyThreadSafetyMode.ExecutionAndPublication);
+        _forestEndpoints = new Lazy<IReadOnlyList<Endpoint>>(
+            ResolveForestEndpoints, LazyThreadSafetyMode.ExecutionAndPublication);
     }
 
     /// <summary>Resolved DC hostname + search-base DN, after auto-discovery.</summary>
@@ -64,12 +77,53 @@ public sealed class LdapDirectoryService : IDirectoryService
 
         try
         {
-            return await Task.Run(() => ResolveGroups(sam), ct);
+            return await Task.Run(() =>
+            {
+                var sids = ResolveGroups(sam);
+                if (sids.Count == 0)
+                {
+                    // Not found in this server's domain — the user may live in
+                    // another domain of the forest (e.g. edu002 vs edu001).
+                    sids = ResolveGroupsForestWide(sam);
+                }
+
+                return sids;
+            }, ct);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "LDAP group resolution failed for {User}; treating as no groups.", sam);
             return Empty();
+        }
+    }
+
+    public async Task<string?> ResolveGroupSidByNameAsync(string name, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return null;
+        }
+
+        var key = name.Trim();
+        if (TryGetCachedSid(key, out var cached))
+        {
+            return cached;
+        }
+
+        try
+        {
+            var sid = await Task.Run(() => ResolveGroupSidForestWide(key), ct);
+            if (sid is not null)
+            {
+                CacheSid(key, sid);
+            }
+
+            return sid;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Forest group-SID resolution failed for {Name}.", name);
+            return null;
         }
     }
 
@@ -209,6 +263,21 @@ public sealed class LdapDirectoryService : IDirectoryService
 
     private void CacheName(string sid, string name)
         => _nameCache[sid] = new CacheEntry<string>(name, DateTime.UtcNow + NameCacheTtl);
+
+    private bool TryGetCachedSid(string name, out string? sid)
+    {
+        if (_sidByNameCache.TryGetValue(name, out var entry) && entry.ExpiresUtc > DateTime.UtcNow)
+        {
+            sid = entry.Value;
+            return true;
+        }
+
+        sid = null;
+        return false;
+    }
+
+    private void CacheSid(string name, string sid)
+        => _sidByNameCache[name] = new CacheEntry<string>(sid, DateTime.UtcNow + NameCacheTtl);
 
     private bool TryGetCatalog(int limit, out IReadOnlyList<DirectoryGroup> catalog)
     {
@@ -427,6 +496,135 @@ public sealed class LdapDirectoryService : IDirectoryService
 
         return sids;
     }
+
+    /// <summary>
+    /// The user's transitive group SIDs when they live in another domain of the
+    /// forest: search each domain for the account, and read tokenGroups from
+    /// whichever domain holds it. Each domain is best-effort — a failure there
+    /// just moves on. Empty if the user isn't found anywhere reachable.
+    /// </summary>
+    private IReadOnlySet<string> ResolveGroupsForestWide(string sam)
+    {
+        foreach (var endpoint in _forestEndpoints.Value)
+        {
+            try
+            {
+                using var connection = CreateBoundConnection(endpoint);
+                var userDn = FindSingleDn(connection, endpoint.SearchBase,
+                    $"(&(objectClass=user)(sAMAccountName={EscapeFilter(sam)}))");
+                if (userDn is null)
+                {
+                    continue;
+                }
+
+                var request = new SearchRequest(userDn, "(objectClass=*)", SearchScope.Base, "tokenGroups");
+                var response = (SearchResponse)connection.SendRequest(request);
+
+                var sids = new HashSet<string>(StringComparer.Ordinal);
+                if (response.Entries.Count > 0
+                    && response.Entries[0].Attributes["tokenGroups"] is { } attribute)
+                {
+                    foreach (var value in attribute.GetValues(typeof(byte[])))
+                    {
+                        if (value is byte[] raw)
+                        {
+                            sids.Add(SidConverter.ToSidString(raw));
+                        }
+                    }
+                }
+
+                return sids;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Forest user lookup failed in {Domain}.", endpoint.Server);
+            }
+        }
+
+        return Empty();
+    }
+
+    /// <summary>Searches every forest domain for a group by name, returning the first SID match.</summary>
+    private string? ResolveGroupSidForestWide(string name)
+    {
+        foreach (var endpoint in _forestEndpoints.Value)
+        {
+            try
+            {
+                using var connection = CreateBoundConnection(endpoint);
+                var filter =
+                    $"(&(objectClass=group)(|(sAMAccountName={EscapeFilter(name)})(cn={EscapeFilter(name)})))";
+                var request = new SearchRequest(
+                    endpoint.SearchBase, filter, SearchScope.Subtree, "sAMAccountName", "cn", "objectSid")
+                {
+                    SizeLimit = 5,
+                };
+
+                SearchResponse response;
+                try
+                {
+                    response = (SearchResponse)connection.SendRequest(request);
+                }
+                catch (DirectoryOperationException ex) when (ex.Response is SearchResponse partial)
+                {
+                    response = partial;
+                }
+
+                foreach (SearchResultEntry entry in response.Entries)
+                {
+                    if (GroupName(entry).Equals(name, StringComparison.OrdinalIgnoreCase)
+                        && entry.Attributes["objectSid"]?.GetValues(typeof(byte[])).FirstOrDefault() is byte[] raw)
+                    {
+                        return SidConverter.ToSidString(raw);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Forest group search failed in {Domain}.", endpoint.Server);
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// One <see cref="Endpoint"/> per domain in the forest (DNS name + DN). Falls
+    /// back to just the primary endpoint when the forest can't be enumerated
+    /// (non-Windows, not domain-joined, or no permission).
+    /// </summary>
+    private IReadOnlyList<Endpoint> ResolveForestEndpoints()
+    {
+        try
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                using var forest = Forest.GetCurrentForest();
+                var endpoints = new List<Endpoint>();
+                foreach (Domain domain in forest.Domains)
+                {
+                    endpoints.Add(new Endpoint(domain.Name, DomainDnsToDn(domain.Name)));
+                }
+
+                if (endpoints.Count > 0)
+                {
+                    _logger.LogInformation("Forest domains for cross-domain resolution: {Domains}.",
+                        string.Join(", ", endpoints.Select(e => e.Server)));
+                    return endpoints;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Forest discovery failed; cross-domain resolution falls back to this domain.");
+        }
+
+        return [_endpoint.Value];
+    }
+
+    /// <summary>"edu002.services.vic.gov.au" -&gt; "DC=edu002,DC=services,DC=vic,DC=gov,DC=au".</summary>
+    private static string DomainDnsToDn(string dns)
+        => string.Join(",", dns.Split('.', StringSplitOptions.RemoveEmptyEntries).Select(part => $"DC={part}"));
 
     private static string? FindSingleDn(LdapConnection connection, string searchBase, string filter)
     {

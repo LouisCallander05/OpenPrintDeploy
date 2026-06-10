@@ -102,16 +102,10 @@ public sealed class AdminAccessEvaluator
         return false;
     }
 
-    /// <summary>Resolves a group NAME to its SID via the directory (exact, case-insensitive).</summary>
-    public async Task<string?> ResolveGroupSidAsync(string name, CancellationToken ct = default)
-    {
-        if (string.IsNullOrWhiteSpace(name))
-        {
-            return null;
-        }
-
-        var trimmed = name.Trim();
-        var matches = await _directory.SearchGroupsAsync(trimmed, 10, ct);
-        return matches.FirstOrDefault(g => g.Name.Equals(trimmed, StringComparison.OrdinalIgnoreCase))?.Sid;
-    }
+    /// <summary>
+    /// Resolves a group NAME to its SID, forest-wide (so a cross-domain admin
+    /// group resolves). Delegates to the directory's forest-aware lookup.
+    /// </summary>
+    public Task<string?> ResolveGroupSidAsync(string name, CancellationToken ct = default)
+        => _directory.ResolveGroupSidByNameAsync(name, ct);
 }

@@ -30,6 +30,15 @@ public sealed class StubDirectoryService : IDirectoryService
         // non-empty pair so the method is usable if someone wires it up locally.
         => Task.FromResult(!string.IsNullOrWhiteSpace(username) && !string.IsNullOrEmpty(password));
 
+    public Task<string?> ResolveGroupSidByNameAsync(string name, CancellationToken ct = default)
+    {
+        var trimmed = name?.Trim() ?? string.Empty;
+        string? sid = _stub.Groups
+            .FirstOrDefault(kvp => kvp.Key.Equals(trimmed, StringComparison.OrdinalIgnoreCase))
+            .Value;
+        return Task.FromResult(sid);
+    }
+
     public Task<IReadOnlyList<DirectoryGroup>> SearchGroupsAsync(
         string query, int limit, CancellationToken ct = default)
     {
