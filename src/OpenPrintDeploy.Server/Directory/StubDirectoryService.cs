@@ -36,7 +36,7 @@ public sealed class StubDirectoryService : IDirectoryService
         string? sid = _stub.Groups
             .FirstOrDefault(kvp => kvp.Key.Equals(trimmed, StringComparison.OrdinalIgnoreCase))
             .Value;
-        return Task.FromResult(sid);
+        return Task.FromResult<string?>(sid);
     }
 
     public Task<IReadOnlyList<DirectoryGroup>> SearchGroupsAsync(
