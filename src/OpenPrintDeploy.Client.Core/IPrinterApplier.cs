@@ -9,4 +9,6 @@ namespace OpenPrintDeploy.Client.Core;
 public interface IPrinterApplier
 {
     Task ApplyAsync(ReconcileResult plan, CancellationToken ct = default);
+
+    Task<IReadOnlyList<string>> EnumerateInstalledAsync(CancellationToken ct = default);
 }

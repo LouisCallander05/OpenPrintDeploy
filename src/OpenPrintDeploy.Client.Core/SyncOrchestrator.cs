@@ -24,11 +24,13 @@ public sealed class SyncOrchestrator
         CancellationToken ct = default)
     {
         var desired = await _api.FetchAsync(machineName, ct);
-        var plan = PrinterReconciler.Reconcile(desired, previouslyManaged);
+        var currentlyInstalled = await _applier.EnumerateInstalledAsync(ct);
+        var plan = PrinterReconciler.Reconcile(desired, previouslyManaged, currentlyInstalled);
         await _applier.ApplyAsync(plan, ct);
 
-        return desired.Printers
-            .Select(p => p.UncPath)
+        return previouslyManaged
+            .Where(unc => !plan.ToRemove.Contains(unc, StringComparer.OrdinalIgnoreCase))
+            .Concat(plan.ToAdd.Select(p => p.UncPath))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
     }

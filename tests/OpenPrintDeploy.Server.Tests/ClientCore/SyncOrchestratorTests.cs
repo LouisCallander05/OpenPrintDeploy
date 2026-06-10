@@ -14,7 +14,7 @@ public sealed class SyncOrchestratorTests
         var server = new SyncResponseDto(
             [new PrinterDto("HR", @"\\srv\a"), new PrinterDto("Lobby", @"\\srv\b")]);
         var api = new SyncApiClient(StubHttpClient(server));
-        var applier = new RecordingApplier();
+        var applier = new RecordingApplier(installed: [@"\\srv\b"]);
         var orchestrator = new SyncOrchestrator(api, applier);
 
         var managedAfter = await orchestrator.SyncOnceAsync("PC1", [@"\\srv\b", @"\\srv\c"]);
@@ -23,6 +23,20 @@ public sealed class SyncOrchestratorTests
         Assert.Equal([@"\\srv\a"], applier.Applied!.ToAdd.Select(p => p.UncPath));
         Assert.Equal([@"\\srv\c"], applier.Applied.ToRemove);
         Assert.Equal([@"\\srv\a", @"\\srv\b"], managedAfter.OrderBy(u => u));
+    }
+
+    [Fact]
+    public async Task SyncOnce_ReinstallsMissingPrinters_UsingCurrentConnections()
+    {
+        var server = new SyncResponseDto(
+            [new PrinterDto("HR", @"\\srv\a"), new PrinterDto("Lobby", @"\\srv\b")]);
+        var api = new SyncApiClient(StubHttpClient(server));
+        var applier = new RecordingApplier(installed: [@"\\srv\b"]);
+        var orchestrator = new SyncOrchestrator(api, applier);
+
+        await orchestrator.SyncOnceAsync("PC1", [@"\\srv\a", @"\\srv\b"]);
+
+        Assert.Equal([@"\\srv\a"], applier.Applied!.ToAdd.Select(p => p.UncPath));
     }
 
     [Fact]
@@ -48,6 +62,10 @@ public sealed class SyncOrchestratorTests
 
     private sealed class RecordingApplier : IPrinterApplier
     {
+        private readonly IReadOnlyList<string> _installed;
+
+        public RecordingApplier(IReadOnlyList<string>? installed = null) => _installed = installed ?? [];
+
         public ReconcileResult? Applied { get; private set; }
 
         public Task ApplyAsync(ReconcileResult plan, CancellationToken ct = default)
@@ -55,6 +73,9 @@ public sealed class SyncOrchestratorTests
             Applied = plan;
             return Task.CompletedTask;
         }
+
+        public Task<IReadOnlyList<string>> EnumerateInstalledAsync(CancellationToken ct = default)
+            => Task.FromResult(_installed);
     }
 
     private sealed class StubHandler : HttpMessageHandler

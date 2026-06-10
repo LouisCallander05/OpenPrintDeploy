@@ -17,19 +17,22 @@ public static class PrinterReconciler
 {
     public static ReconcileResult Reconcile(
         SyncResponseDto desired,
-        IReadOnlyCollection<string> previouslyManaged)
+        IReadOnlyCollection<string> previouslyManaged,
+        IReadOnlyCollection<string> currentlyInstalled)
     {
         ArgumentNullException.ThrowIfNull(desired);
         ArgumentNullException.ThrowIfNull(previouslyManaged);
+        ArgumentNullException.ThrowIfNull(currentlyInstalled);
 
         var desiredUncs = desired.Printers
             .Select(p => p.UncPath)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         var managed = previouslyManaged.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var installed = currentlyInstalled.ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         var toAdd = desired.Printers
-            .Where(p => !managed.Contains(p.UncPath))
+            .Where(p => !installed.Contains(p.UncPath))
             .ToList();
 
         var toRemove = managed

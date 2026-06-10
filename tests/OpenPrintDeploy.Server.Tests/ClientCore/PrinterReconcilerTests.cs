@@ -14,7 +14,7 @@ public sealed class PrinterReconcilerTests
         var desired = new SyncResponseDto([P(@"\\srv\a"), P(@"\\srv\b")]);
         var managed = new[] { @"\\srv\b", @"\\srv\c" };
 
-        var plan = PrinterReconciler.Reconcile(desired, managed);
+        var plan = PrinterReconciler.Reconcile(desired, managed, managed);
 
         Assert.Equal([@"\\srv\a"], plan.ToAdd.Select(p => p.UncPath));
         Assert.Equal([@"\\srv\c"], plan.ToRemove);
@@ -26,7 +26,7 @@ public sealed class PrinterReconcilerTests
         var desired = new SyncResponseDto([P(@"\\SRV\A")]);
         var managed = new[] { @"\\srv\a" };
 
-        var plan = PrinterReconciler.Reconcile(desired, managed);
+        var plan = PrinterReconciler.Reconcile(desired, managed, managed);
 
         Assert.Empty(plan.ToAdd);
         Assert.Empty(plan.ToRemove);
@@ -38,7 +38,7 @@ public sealed class PrinterReconcilerTests
         var desired = new SyncResponseDto([]);
         var managed = new[] { @"\\srv\a", @"\\srv\b" };
 
-        var plan = PrinterReconciler.Reconcile(desired, managed);
+        var plan = PrinterReconciler.Reconcile(desired, managed, managed);
 
         Assert.Empty(plan.ToAdd);
         Assert.Equal(2, plan.ToRemove.Count);
@@ -49,7 +49,7 @@ public sealed class PrinterReconcilerTests
     {
         var desired = new SyncResponseDto([P(@"\\srv\a"), P(@"\\srv\b")]);
 
-        var plan = PrinterReconciler.Reconcile(desired, []);
+        var plan = PrinterReconciler.Reconcile(desired, [], []);
 
         Assert.Equal(2, plan.ToAdd.Count);
         Assert.Empty(plan.ToRemove);
