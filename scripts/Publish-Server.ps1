@@ -97,6 +97,16 @@ New-Item -ItemType Directory -Force -Path $clientDest | Out-Null
 Copy-Item -Path $clientSrc -Destination $clientDest -Force
 Remove-Item -Recurse -Force $clientTmp
 
+# Also bundle the client MSI (for Intune) so the server serves it pre-named at
+# /download/client-msi. Lands in publish/OpenPrintDeploy.Client.msi (also a
+# release asset) and is copied into the payload before WiX harvests it.
+Write-Host "Building tray-client MSI to bundle for download..."
+& (Join-Path $PSScriptRoot "Publish-Client-Msi.ps1") `
+    -Configuration $Configuration -Runtime $Runtime -Version $Version
+$clientMsiSrc = Join-Path $repoRoot "publish/OpenPrintDeploy.Client.msi"
+if (-not (Test-Path $clientMsiSrc)) { throw "Client MSI missing after Publish-Client-Msi.ps1." }
+Copy-Item -Path $clientMsiSrc -Destination $clientDest -Force
+
 # Remove the gitignored dev config so it doesn't leak production-default
 # overrides into the MSI. The service uses appsettings.json (Negotiate + Ldap).
 $devCfg = Join-Path $resolvedOut "appsettings.Development.json"

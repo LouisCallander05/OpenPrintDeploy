@@ -48,10 +48,6 @@ jobs:
         run: .\scripts\Publish-Client.ps1 -Version "${{ steps.ver.outputs.version }}"
         shell: powershell
 
-      - name: Build client MSI (Intune)
-        run: .\scripts\Publish-Client-Msi.ps1 -Version "${{ steps.ver.outputs.version }}"
-        shell: powershell
-
       - name: Zip client artifact
         shell: powershell
         run: |

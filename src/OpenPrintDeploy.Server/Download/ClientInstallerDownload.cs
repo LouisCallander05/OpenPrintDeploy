@@ -15,6 +15,9 @@ public static class ClientInstallerDownload
     // to the server's content root. Overridable via Client:InstallerPath.
     public const string DefaultRelativePath = "client/OpenPrintDeploy.Client.Installer.exe";
 
+    // The MSI (for Intune), bundled alongside the exe. Overridable via Client:MsiPath.
+    public const string DefaultMsiRelativePath = "client/OpenPrintDeploy.Client.msi";
+
     /// <summary>Absolute path to the installer the server hands out.</summary>
     public static string ResolveInstallerPath(IConfiguration cfg, string contentRoot)
     {
@@ -29,6 +32,20 @@ public static class ClientInstallerDownload
         return Path.Combine(contentRoot, DefaultRelativePath);
     }
 
+    /// <summary>Absolute path to the client MSI the server hands out.</summary>
+    public static string ResolveMsiPath(IConfiguration cfg, string contentRoot)
+    {
+        var configured = cfg["Client:MsiPath"];
+        if (!string.IsNullOrWhiteSpace(configured))
+        {
+            return Path.IsPathRooted(configured)
+                ? configured
+                : Path.Combine(contentRoot, configured);
+        }
+
+        return Path.Combine(contentRoot, DefaultMsiRelativePath);
+    }
+
     /// <summary>
     /// Filename offered to the browser: <c>OpenPrintDeploy - &lt;host&gt;.exe</c>.
     /// The installer turns <c>&lt;host&gt;</c> into <c>http://&lt;host&gt;:5080</c>,
@@ -38,6 +55,15 @@ public static class ClientInstallerDownload
     /// </summary>
     public static string DownloadFileName(IConfiguration cfg)
         => $"OpenPrintDeploy - {ResolveHost(cfg)}.exe";
+
+    /// <summary>
+    /// Filename offered to the browser for the MSI: <c>OpenPrintDeploy - &lt;host&gt;.msi</c>.
+    /// The tray reads the host out of this filename (recorded by the MSI as
+    /// <c>OriginalDatabase</c>) the same way the exe does — so wrapping this file
+    /// as-is for Intune carries the server with it.
+    /// </summary>
+    public static string MsiDownloadFileName(IConfiguration cfg)
+        => $"OpenPrintDeploy - {ResolveHost(cfg)}.msi";
 
     /// <summary>
     /// The host clients should reach this server on. Explicit

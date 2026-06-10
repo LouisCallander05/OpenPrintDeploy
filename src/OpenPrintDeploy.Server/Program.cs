@@ -214,6 +214,26 @@ app.MapGet("/download/client", (IConfiguration cfg, IWebHostEnvironment env) =>
 })
 .RequireAuthorization(AuthPolicies.Admin);
 
+// Hands out the tray-client MSI, pre-named "OpenPrintDeploy - <host>.msi". Wrap
+// it as-is for Intune: the MSI auto-fills install/uninstall/detection on upload,
+// and the tray reads the server from the filename. Admin-only.
+app.MapGet("/download/client-msi", (IConfiguration cfg, IWebHostEnvironment env) =>
+{
+    var path = ClientInstallerDownload.ResolveMsiPath(cfg, env.ContentRootPath);
+    if (!File.Exists(path))
+    {
+        return Results.Problem(
+            detail: $"The client MSI isn't bundled with this server build (looked in '{path}'). " +
+                    "Publish with scripts/Publish-Server.ps1 (it bundles the MSI), or point " +
+                    "Client:MsiPath at a built OpenPrintDeploy.Client.msi.",
+            statusCode: StatusCodes.Status404NotFound);
+    }
+
+    var fileName = ClientInstallerDownload.MsiDownloadFileName(cfg);
+    return Results.File(path, "application/octet-stream", fileDownloadName: fileName);
+})
+.RequireAuthorization(AuthPolicies.Admin);
+
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();
 
