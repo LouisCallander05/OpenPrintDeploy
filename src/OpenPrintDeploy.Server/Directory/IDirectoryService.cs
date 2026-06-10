@@ -16,6 +16,15 @@ public interface IDirectoryService
     Task<IReadOnlySet<string>> GetGroupSidsAsync(string username, CancellationToken ct = default);
 
     /// <summary>
+    /// Validates a domain username + password by attempting an LDAP bind as that
+    /// user — used by the admin UI's Basic authentication. Returns false on bad
+    /// credentials or any directory error (fail closed). The default returns
+    /// false; real providers override it.
+    /// </summary>
+    Task<bool> ValidateCredentialsAsync(string username, string password, CancellationToken ct = default)
+        => Task.FromResult(false);
+
+    /// <summary>
     /// Groups whose name matches <paramref name="query"/> (a case-insensitive
     /// substring; empty matches the first <paramref name="limit"/> groups),
     /// for the admin zone-rule picker. Returns an empty list if the directory

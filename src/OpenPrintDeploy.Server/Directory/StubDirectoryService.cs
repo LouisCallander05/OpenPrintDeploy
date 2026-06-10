@@ -25,6 +25,11 @@ public sealed class StubDirectoryService : IDirectoryService
         return Task.FromResult(sids);
     }
 
+    public Task<bool> ValidateCredentialsAsync(string username, string password, CancellationToken ct = default)
+        // Dev never uses Basic auth (it runs the Dev header scheme); accept any
+        // non-empty pair so the method is usable if someone wires it up locally.
+        => Task.FromResult(!string.IsNullOrWhiteSpace(username) && !string.IsNullOrEmpty(password));
+
     public Task<IReadOnlyList<DirectoryGroup>> SearchGroupsAsync(
         string query, int limit, CancellationToken ct = default)
     {

@@ -1,0 +1,211 @@
+@page "/settings"
+@rendermode InteractiveServer
+@attribute [Authorize(Policy = AuthPolicies.Admin)]
+@using Microsoft.AspNetCore.Components.Authorization
+@using OpenPrintDeploy.Server.Auth
+@inject AdminAccessEvaluator Evaluator
+@inject AuthenticationStateProvider AuthState
+
+<PageTitle>Settings · Open Print Deploy</PageTitle>
+
+<h1>Settings</h1>
+<p class="text-muted" style="max-width: 720px;">
+    Who may administer Open Print Deploy. Add the domain group(s) your IT admins belong to and/or
+    individual usernames. While this list is empty, anyone who can sign in is treated as an admin —
+    set it as soon as you’ve confirmed sign-in works. Grants in <code>appsettings.json</code> also
+    apply and act as a break-glass if you’re ever locked out.
+</p>
+
+@if (_error is not null)
+{
+    <div class="alert alert-danger" style="max-width: 720px;">@_error</div>
+}
+@if (_message is not null)
+{
+    <div class="alert alert-success" style="max-width: 720px;">@_message</div>
+}
+
+<div class="card mb-3" style="max-width: 720px;">
+    <div class="card-body">
+        <h5 class="card-title">Admin groups</h5>
+        @if (_groups.Count == 0)
+        {
+            <p class="text-muted mb-2">No groups configured.</p>
+        }
+        else
+        {
+            <ul class="list-group mb-2">
+                @foreach (var group in _groups)
+                {
+                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                        <span>@group</span>
+                        <button class="btn btn-sm btn-outline-danger" @onclick="() => RemoveGroup(group)">Remove</button>
+                    </li>
+                }
+            </ul>
+        }
+        <div class="input-group">
+            <input class="form-control" placeholder="e.g. SchoolName Print Admins"
+                   @bind="_newGroup" @bind:event="oninput" />
+            <button class="btn btn-outline-primary" @onclick="AddGroupAsync" disabled="@_busy">Add group</button>
+        </div>
+        @if (_groupError is not null)
+        {
+            <div class="form-text text-danger">@_groupError</div>
+        }
+        else
+        {
+            <div class="form-text">The group is checked against the directory before it's added.</div>
+        }
+    </div>
+</div>
+
+<div class="card mb-3" style="max-width: 720px;">
+    <div class="card-body">
+        <h5 class="card-title">Admin users</h5>
+        @if (_users.Count == 0)
+        {
+            <p class="text-muted mb-2">No individual users configured.</p>
+        }
+        else
+        {
+            <ul class="list-group mb-2">
+                @foreach (var user in _users)
+                {
+                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                        <span>@user</span>
+                        <button class="btn btn-sm btn-outline-danger" @onclick="() => RemoveUser(user)">Remove</button>
+                    </li>
+                }
+            </ul>
+        }
+        <div class="input-group">
+            <input class="form-control" placeholder="e.g. jsmith or CONTOSO\jsmith"
+                   @bind="_newUser" @bind:event="oninput" @onkeydown="OnUserKeyDown" />
+            <button class="btn btn-outline-primary" @onclick="AddUser" disabled="@_busy">Add user</button>
+        </div>
+    </div>
+</div>
+
+<button class="btn btn-primary" @onclick="SaveAsync" disabled="@_busy">Save</button>
+
+@code {
+    private readonly List<string> _groups = [];
+    private readonly List<string> _users = [];
+    private string? _newGroup;
+    private string? _newUser;
+    private string? _error;
+    private string? _groupError;
+    private string? _message;
+    private bool _busy;
+
+    protected override void OnInitialized()
+    {
+        var stored = Evaluator.GetStored();
+        _groups.AddRange(stored.Groups);
+        _users.AddRange(stored.Users);
+    }
+
+    private async Task AddGroupAsync()
+    {
+        _groupError = null;
+        _message = null;
+        var name = _newGroup?.Trim();
+        if (string.IsNullOrEmpty(name))
+        {
+            return;
+        }
+
+        _busy = true;
+        try
+        {
+            var sid = await Evaluator.ResolveGroupSidAsync(name);
+            if (sid is null)
+            {
+                _groupError = $"No group named “{name}” was found in the directory.";
+                return;
+            }
+
+            if (!_groups.Any(g => g.Equals(name, StringComparison.OrdinalIgnoreCase)))
+            {
+                _groups.Add(name);
+            }
+
+            _newGroup = string.Empty;
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private void RemoveGroup(string group)
+    {
+        _groups.RemoveAll(g => g.Equals(group, StringComparison.OrdinalIgnoreCase));
+        _message = null;
+    }
+
+    private void AddUser()
+    {
+        _message = null;
+        var name = _newUser?.Trim();
+        if (string.IsNullOrEmpty(name))
+        {
+            return;
+        }
+
+        if (!_users.Any(u => u.Equals(name, StringComparison.OrdinalIgnoreCase)))
+        {
+            _users.Add(name);
+        }
+
+        _newUser = string.Empty;
+    }
+
+    private void OnUserKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+        {
+            AddUser();
+        }
+    }
+
+    private void RemoveUser(string user)
+    {
+        _users.RemoveAll(u => u.Equals(user, StringComparison.OrdinalIgnoreCase));
+        _message = null;
+    }
+
+    private async Task SaveAsync()
+    {
+        _error = null;
+        _message = null;
+        _busy = true;
+        try
+        {
+            var prospective = new AdminAccess(_groups.ToList(), _users.ToList());
+            var effective = Evaluator.Combine(prospective);
+
+            // Refuse to save a config that would lock the current admin out.
+            if (!effective.IsOpen)
+            {
+                var state = await AuthState.GetAuthenticationStateAsync();
+                if (!await Evaluator.IsAdminAsync(state.User, effective))
+                {
+                    _error = "That would remove your own admin access. Add a group you belong to, "
+                           + "or your own username, before saving.";
+                    return;
+                }
+            }
+
+            Evaluator.SaveStored(prospective);
+            _message = effective.IsOpen
+                ? "Saved. No admins are configured yet, so any signed-in user is currently an admin."
+                : "Saved.";
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+}

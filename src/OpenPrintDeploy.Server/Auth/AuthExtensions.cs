@@ -22,21 +22,56 @@ public static class AuthExtensions
     {
         services.Configure<AuthOptions>(configuration.GetSection(AuthOptions.SectionName));
 
+        // Scheme choice is env-based (not a config read that would happen before
+        // WebApplicationFactory's overrides apply). Dev: the header-based Dev
+        // handler for both the admin UI and /sync. Production: Basic for the
+        // admin browser UI (default scheme, so the UI authenticates + displays as
+        // the typed admin account) and Negotiate for the /sync client API. An
+        // operator can fall back to legacy Windows-SSO admin via Auth:AdminScheme.
+        string adminScheme;
+        string clientScheme;
         if (env.IsDevelopment())
         {
+            adminScheme = clientScheme = DevAuthenticationHandler.SchemeName;
             services.AddAuthentication(DevAuthenticationHandler.SchemeName)
                 .AddScheme<AuthenticationSchemeOptions, DevAuthenticationHandler>(
                     DevAuthenticationHandler.SchemeName, configureOptions: null);
         }
         else
         {
-            services.AddAuthentication(NegotiateDefaults.AuthenticationScheme)
-                .AddNegotiate();
+            clientScheme = NegotiateDefaults.AuthenticationScheme;
+            var useNegotiateAdmin = string.Equals(
+                configuration["Auth:AdminScheme"], "Negotiate", StringComparison.OrdinalIgnoreCase);
+
+            if (useNegotiateAdmin)
+            {
+                // Legacy: Windows SSO for the admin UI too.
+                adminScheme = NegotiateDefaults.AuthenticationScheme;
+                services.AddAuthentication(NegotiateDefaults.AuthenticationScheme)
+                    .AddNegotiate();
+            }
+            else
+            {
+                adminScheme = BasicAuthenticationHandler.SchemeName;
+                services.AddAuthentication(BasicAuthenticationHandler.SchemeName)
+                    .AddNegotiate()
+                    .AddScheme<AuthenticationSchemeOptions, BasicAuthenticationHandler>(
+                        BasicAuthenticationHandler.SchemeName, configureOptions: null);
+            }
         }
 
+        services.AddSingleton(new AuthSchemes(adminScheme, clientScheme));
+        services.AddSingleton<AdminAccessStore>();
+        services.AddSingleton<AdminAccessEvaluator>();
         services.AddScoped<IAuthorizationHandler, AdminAuthorizationHandler>();
+
         services.AddAuthorizationBuilder()
-            .AddPolicy(AuthPolicies.Admin, policy => policy.Requirements.Add(new AdminRequirement()));
+            .AddPolicy(AuthPolicies.Admin, policy =>
+            {
+                policy.AddAuthenticationSchemes(adminScheme);
+                policy.RequireAuthenticatedUser();
+                policy.Requirements.Add(new AdminRequirement());
+            });
 
         return services;
     }

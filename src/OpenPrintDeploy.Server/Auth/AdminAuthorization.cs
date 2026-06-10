@@ -1,6 +1,4 @@
 using Microsoft.AspNetCore.Authorization;
-using Microsoft.Extensions.Options;
-using OpenPrintDeploy.Server.Directory;
 
 namespace OpenPrintDeploy.Server.Auth;
 
@@ -8,53 +6,24 @@ namespace OpenPrintDeploy.Server.Auth;
 public sealed class AdminRequirement : IAuthorizationRequirement;
 
 /// <summary>
-/// Grants admin-UI access. If no admin group SIDs are configured, any
-/// authenticated user passes (single-operator/dev). Otherwise the user's
-/// resolved group SIDs must intersect the configured set. Group resolution
-/// happens here (the cold admin-UI path) rather than globally, so the hot
-/// <c>/sync</c> path never pays for it.
+/// Grants admin-UI access by delegating to <see cref="AdminAccessEvaluator"/>,
+/// which combines the appsettings break-glass grants with the editable
+/// Settings-page list (and falls back to "any authenticated user" when nothing
+/// is configured anywhere). Runs on the cold admin-UI path only.
 /// </summary>
 public sealed class AdminAuthorizationHandler : AuthorizationHandler<AdminRequirement>
 {
-    private readonly IDirectoryService _directory;
-    private readonly IReadOnlyList<string> _adminSids;
+    private readonly AdminAccessEvaluator _evaluator;
 
-    public AdminAuthorizationHandler(IDirectoryService directory, IOptions<AuthOptions> options)
+    public AdminAuthorizationHandler(AdminAccessEvaluator evaluator)
     {
-        _directory = directory;
-        _adminSids = options.Value.Admin.GroupSids;
+        _evaluator = evaluator;
     }
 
     protected override async Task HandleRequirementAsync(
         AuthorizationHandlerContext context, AdminRequirement requirement)
     {
-        if (context.User.Identity?.IsAuthenticated != true)
-        {
-            return;
-        }
-
-        if (_adminSids.Count == 0)
-        {
-            context.Succeed(requirement);
-            return;
-        }
-
-        // Prefer the authenticated token's group SIDs (cross-domain, no LDAP);
-        // fall back to a directory lookup only when the token carries none (the
-        // dev header-auth path).
-        var sids = PrincipalGroups.FromPrincipal(context.User);
-        if (sids.Count == 0)
-        {
-            var username = context.User.Identity.Name;
-            if (string.IsNullOrEmpty(username))
-            {
-                return;
-            }
-
-            sids = await _directory.GetGroupSidsAsync(username);
-        }
-
-        if (sids.Overlaps(_adminSids))
+        if (await _evaluator.IsAdminAsync(context.User))
         {
             context.Succeed(requirement);
         }

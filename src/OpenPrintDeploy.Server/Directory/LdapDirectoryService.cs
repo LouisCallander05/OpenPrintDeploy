@@ -73,6 +73,61 @@ public sealed class LdapDirectoryService : IDirectoryService
         }
     }
 
+    public async Task<bool> ValidateCredentialsAsync(string username, string password, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(username) || string.IsNullOrEmpty(password))
+        {
+            return false;
+        }
+
+        try
+        {
+            return await Task.Run(() => TryBindAsUser(username.Trim(), password), ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "LDAP credential validation errored for {User}; denying.", username);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Binds to the directory AS the supplied user. A successful bind means the
+    /// password is valid; an <see cref="LdapException"/> means it isn't (or the
+    /// account is disabled/locked). The username may be <c>DOMAIN\user</c> or a
+    /// <c>user@domain</c> UPN — Negotiate handles both.
+    /// </summary>
+    private bool TryBindAsUser(string username, string password)
+    {
+        var endpoint = _endpoint.Value;
+        using var connection = new LdapConnection(new LdapDirectoryIdentifier(endpoint.Server, _ldap.Port))
+        {
+            Timeout = TimeSpan.FromSeconds(_ldap.TimeoutSeconds),
+            AuthType = AuthType.Negotiate,
+        };
+        connection.SessionOptions.ProtocolVersion = 3;
+        connection.SessionOptions.ReferralChasing = ReferralChasingOptions.None;
+
+        if (_ldap.UseSsl)
+        {
+            connection.SessionOptions.SecureSocketLayer = true;
+            if (_ldap.AllowInvalidCertificate)
+            {
+                connection.SessionOptions.VerifyServerCertificate = (_, _) => true;
+            }
+        }
+
+        try
+        {
+            connection.Bind(new NetworkCredential(username, password));
+            return true;
+        }
+        catch (LdapException)
+        {
+            return false;
+        }
+    }
+
     public async Task<IReadOnlyList<DirectoryGroup>> SearchGroupsAsync(
         string query, int limit, CancellationToken ct = default)
     {

@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.EntityFrameworkCore;
 using OpenPrintDeploy.Server.Admin;
 using OpenPrintDeploy.Server.Auth;
@@ -168,6 +169,14 @@ app.UseAntiforgery();
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
 
+// /sync authenticates clients with the client scheme (Negotiate in production,
+// Dev in development) — NOT the admin Basic scheme. This keeps Kerberos clients
+// working unchanged regardless of how the admin UI signs in.
+var clientScheme = app.Services.GetRequiredService<AuthSchemes>().Client;
+var syncPolicy = new AuthorizationPolicyBuilder(clientScheme)
+    .RequireAuthenticatedUser()
+    .Build();
+
 app.MapPost("/sync", async (
     SyncRequestDto request,
     SyncHandler handler,
@@ -182,7 +191,7 @@ app.MapPost("/sync", async (
     var response = await handler.HandleAsync(http.User, request.MachineName, ct);
     return Results.Ok(response);
 })
-.RequireAuthorization()
+.RequireAuthorization(syncPolicy)
 .DisableAntiforgery();
 
 // Hands out the tray-client installer, pre-named "OpenPrintDeploy - <host>.exe"
