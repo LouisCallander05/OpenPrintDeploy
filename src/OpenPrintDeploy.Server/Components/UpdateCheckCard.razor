@@ -1,0 +1,63 @@
+@rendermode InteractiveServer
+@using OpenPrintDeploy.Server.Updates
+@inject UpdateCheckService Updates
+
+<div class="card mt-3" style="max-width: 640px;">
+    <div class="card-body">
+        <h5 class="card-title">Server updates</h5>
+        <p class="card-text text-muted mb-2">
+            This server is running <strong>v@BuildInfo.Version</strong>.
+        </p>
+
+        <button class="btn btn-sm btn-primary" @onclick="CheckAsync" disabled="@_checking">
+            @(_checking ? "Checking…" : "Check for updates")
+        </button>
+
+        @if (_result is not null)
+        {
+            <div class="mt-2">
+                @if (_result.Error is not null)
+                {
+                    <span class="text-danger">@_result.Error</span>
+                }
+                else if (_result.UpdateAvailable)
+                {
+                    <span class="text-success fw-semibold">Update available: v@_result.LatestVersion</span>
+                    @if (_result.PublishedAt is { } published)
+                    {
+                        <span class="text-muted"> (released @published.ToLocalTime().ToString("d MMM yyyy"))</span>
+                    }
+                    @if (_result.ReleaseUrl is not null)
+                    {
+                        <div>
+                            <a href="@_result.ReleaseUrl" target="_blank" rel="noopener">Release notes &amp; download</a>
+                        </div>
+                    }
+                }
+                else
+                {
+                    <span class="text-success">You’re on the latest version.</span>
+                }
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    private bool _checking;
+    private UpdateCheckResult? _result;
+
+    private async Task CheckAsync()
+    {
+        _checking = true;
+        _result = null;
+        try
+        {
+            _result = await Updates.CheckAsync();
+        }
+        finally
+        {
+            _checking = false;
+        }
+    }
+}

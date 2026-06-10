@@ -7,6 +7,7 @@ using OpenPrintDeploy.Server.Directory;
 using OpenPrintDeploy.Server.Download;
 using OpenPrintDeploy.Server.Spooler;
 using OpenPrintDeploy.Server.Sync;
+using OpenPrintDeploy.Server.Updates;
 using OpenPrintDeploy.Server.Zones;
 using OpenPrintDeploy.Shared.Sync;
 
@@ -68,6 +69,21 @@ else
 {
     builder.Services.AddSingleton<IDirectoryService, LdapDirectoryService>();
 }
+
+// "Check for updates" — compares this server against the latest GitHub release.
+builder.Services.Configure<UpdateOptions>(
+    builder.Configuration.GetSection(UpdateOptions.SectionName));
+builder.Services.AddHttpClient<UpdateCheckService>(client =>
+{
+    client.BaseAddress = new Uri("https://api.github.com/");
+    client.Timeout = TimeSpan.FromSeconds(10);
+    // GitHub requires a User-Agent and recommends pinning the API version. Keep
+    // the UA a fixed token (no version) so an odd version string can never throw
+    // here and take down startup.
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("OpenPrintDeploy-Server");
+    client.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
+    client.DefaultRequestHeaders.Add("X-GitHub-Api-Version", "2022-11-28");
+});
 
 builder.Services.AddAppAuthentication(builder.Configuration, builder.Environment);
 
