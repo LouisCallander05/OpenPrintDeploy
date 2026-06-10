@@ -5,7 +5,7 @@
     <div class="card-body">
         <h5 class="card-title">Server updates</h5>
         <p class="card-text text-muted mb-2">
-            This server is running <strong>v@BuildInfo.Version</strong>.
+            This server is running <strong>v@(BuildInfo.Version)</strong>.
         </p>
 
         <button class="btn btn-sm btn-primary" @onclick="CheckAsync" disabled="@_checking">
