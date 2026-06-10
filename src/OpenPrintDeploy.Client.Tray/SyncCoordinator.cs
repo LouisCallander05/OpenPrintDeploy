@@ -5,11 +5,12 @@ using OpenPrintDeploy.Client.Core;
 namespace OpenPrintDeploy.Client.Tray;
 
 /// <summary>Outcome of one sync attempt, for surfacing a tray notification.</summary>
-public readonly record struct SyncOutcome(bool Ok, int PrinterCount, string? Error)
+public readonly record struct SyncOutcome(bool Ok, int PrinterCount, IReadOnlyList<string> AddedNames, string? Error)
 {
-    public static SyncOutcome Success(int count) => new(true, count, null);
+    public static SyncOutcome Success(int count, IReadOnlyList<string> addedNames)
+        => new(true, count, addedNames, null);
 
-    public static SyncOutcome Failure(string error) => new(false, 0, error);
+    public static SyncOutcome Failure(string error) => new(false, 0, [], error);
 }
 
 /// <summary>
@@ -87,9 +88,9 @@ public sealed class SyncCoordinator : IDisposable
     private async Task<SyncOutcome> SyncWithCurrentClientAsync(CancellationToken ct)
     {
         var managed = _state.Load();
-        var updated = await _orchestrator!.SyncOnceAsync(_machineName, managed, ct);
-        _state.Save(updated);
-        return SyncOutcome.Success(updated.Count);
+        var result = await _orchestrator!.SyncOnceAsync(_machineName, managed, ct);
+        _state.Save(result.ManagedUncs);
+        return SyncOutcome.Success(result.ManagedUncs.Count, result.AddedNames);
     }
 
     private bool EnsureClient()

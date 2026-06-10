@@ -157,11 +157,33 @@ public partial class App : Application
         }
 
         var outcome = await _coordinator.RunOnceAsync();
-        if (manual && outcome.Ok)
+
+        // Always notify when printers are newly installed, even on background syncs.
+        if (outcome.Ok && outcome.AddedNames.Count > 0)
+        {
+            var text = outcome.AddedNames.Count == 1
+                ? $"Printer added: {outcome.AddedNames[0]}"
+                : $"{outcome.AddedNames.Count} printers added.";
+            TrayBalloon.Show(_notifyIcon, Branding.ProductName, text, _balloonIcon, 4000);
+            return;
+        }
+
+        if (!manual)
+        {
+            return;
+        }
+
+        if (outcome.Ok)
         {
             TrayBalloon.Show(
                 _notifyIcon, Branding.ProductName,
                 $"{outcome.PrinterCount} printer(s) in sync.", _balloonIcon, 3000);
+        }
+        else
+        {
+            _notifyIcon.ShowBalloonTip(
+                6000, Branding.ProductName,
+                outcome.Error ?? "Sync failed.", Forms.ToolTipIcon.Error);
         }
     }
 

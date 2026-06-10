@@ -1,5 +1,9 @@
 namespace OpenPrintDeploy.Client.Core;
 
+/// <param name="ManagedUncs">UNC paths of all printers this client now manages.</param>
+/// <param name="AddedNames">Display names of printers added in this cycle (empty when nothing changed).</param>
+public sealed record SyncResult(IReadOnlyList<string> ManagedUncs, IReadOnlyList<string> AddedNames);
+
 /// <summary>
 /// One sync cycle: fetch the resolved set, diff against what we deployed last
 /// time, and apply the difference. Returns the new managed UNC set for the
@@ -18,7 +22,7 @@ public sealed class SyncOrchestrator
         _applier = applier;
     }
 
-    public async Task<IReadOnlyList<string>> SyncOnceAsync(
+    public async Task<SyncResult> SyncOnceAsync(
         string? machineName,
         IReadOnlyCollection<string> previouslyManaged,
         CancellationToken ct = default)
@@ -28,10 +32,14 @@ public sealed class SyncOrchestrator
         var plan = PrinterReconciler.Reconcile(desired, previouslyManaged, currentlyInstalled);
         await _applier.ApplyAsync(plan, ct);
 
-        return previouslyManaged
+        var managedUncs = previouslyManaged
             .Where(unc => !plan.ToRemove.Contains(unc, StringComparer.OrdinalIgnoreCase))
             .Concat(plan.ToAdd.Select(p => p.UncPath))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
+
+        var addedNames = plan.ToAdd.Select(p => p.DisplayName).ToList();
+
+        return new SyncResult(managedUncs, addedNames);
     }
 }
