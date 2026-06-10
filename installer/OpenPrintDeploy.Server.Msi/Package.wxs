@@ -112,7 +112,9 @@
     <!-- Start Menu shortcut to the admin UI. It's a .url internet shortcut
          (the target is a web address, not an exe). localhost is correct because
          the shortcut lives on the server itself, independent of hostname/DNS.
-         Per-machine install -> HKLM keypath for the component. -->
+         Start Menu folders count as a user-profile location, so the component
+         keypath must be HKCU (per the documented WiX shortcut pattern / ICE38),
+         even though the package itself is per-machine. -->
     <DirectoryRef Id="AppProgramMenuDir">
       <Component Id="AdminShortcut" Guid="9C2F7B30-5E84-4A1D-B6C2-3F0A9D4E7B12">
         <util:InternetShortcut
@@ -122,7 +124,7 @@
             Type="url" />
         <RemoveFolder Id="RemoveAppProgramMenuDir" On="uninstall" />
         <RegistryValue
-            Root="HKLM"
+            Root="HKCU"
             Key="Software\OpenPrintDeploy"
             Name="AdminShortcutInstalled"
             Type="integer"
