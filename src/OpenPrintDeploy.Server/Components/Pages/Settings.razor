@@ -3,12 +3,16 @@
 @attribute [Authorize(Policy = AuthPolicies.Admin)]
 @using Microsoft.AspNetCore.Components.Authorization
 @using OpenPrintDeploy.Server.Auth
+@using OpenPrintDeploy.Server.Https
 @inject AdminAccessEvaluator Evaluator
 @inject AuthenticationStateProvider AuthState
+@inject HttpsStatus HttpsState
 
 <PageTitle>Settings · Open Print Deploy</PageTitle>
 
 <h1>Settings</h1>
+
+<h4 class="mt-2">Administrators</h4>
 <p class="text-muted" style="max-width: 720px;">
     Who may administer Open Print Deploy. Add the domain group(s) your IT admins belong to and/or
     individual usernames. While this list is empty, anyone who can sign in is treated as an admin —
@@ -88,6 +92,47 @@
 </div>
 
 <button class="btn btn-primary" @onclick="SaveAsync" disabled="@_busy">@(_confirmSave ? "Save anyway" : "Save")</button>
+
+<h4 class="mt-4">Connection security</h4>
+<div class="card mb-3" style="max-width: 720px;">
+    <div class="card-body">
+        @if (HttpsState is { Enabled: true, Bound: true })
+        {
+            <p class="card-text text-success mb-1">
+                HTTPS is enabled on port @HttpsState.Port (HTTPS for <code>@HttpsState.Host</code>).
+            </p>
+            @if (HttpsState.SelfSigned)
+            {
+                <p class="card-text text-muted mb-0">
+                    Self-signed certificate <code>@HttpsState.Thumbprint</code>. Distribute its public
+                    certificate to clients' Trusted Root store so they trust this server, then point
+                    clients at <code>https://@(HttpsState.Host):@(HttpsState.Port)</code>.
+                </p>
+            }
+            else
+            {
+                <p class="card-text text-muted mb-0">Certificate <code>@HttpsState.Thumbprint</code>.</p>
+            }
+        }
+        else if (HttpsState.Enabled)
+        {
+            <p class="card-text text-danger mb-0">
+                HTTPS is enabled but no certificate could be provisioned — the server is serving HTTP
+                only. Check the service log, then restart.
+            </p>
+        }
+        else
+        {
+            <p class="card-text text-warning mb-0">
+                Traffic is <strong>HTTP only</strong>. Set <code>Https:Enabled</code> to <code>true</code>
+                in <code>appsettings.json</code> and restart the service to serve over TLS.
+            </p>
+        }
+    </div>
+</div>
+
+<h4 class="mt-4">Updates</h4>
+<UpdateCheckCard />
 
 @code {
     private readonly List<string> _groups = [];
