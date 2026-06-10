@@ -82,6 +82,9 @@ public sealed class TrayAuthenticator
     public HttpClient? SignInInteractive()
         => ReAuthenticate("Enter the domain account this PC should use.");
 
+    /// <summary>Removes the stored credentials so the next sync will prompt again.</summary>
+    public void SignOut() => WindowsCredentialStore.Delete(_credentialTarget);
+
     /// <summary>
     /// Describes the current sign-in state for the tray menu: whether we use the
     /// signed-in Windows identity (Kerberos) and which account that is, or — on a

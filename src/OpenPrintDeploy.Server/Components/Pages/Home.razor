@@ -39,14 +39,8 @@
     <div class="card-body">
         <h5 class="card-title">Client installer</h5>
         <p class="card-text text-muted mb-2">
-            Both downloads are pre-named for this server and configure themselves
-            from their own filename — no arguments needed.
+            Pre-named for this server — wrap as-is for Intune. Saves as <code>@_msiFileName</code>
         </p>
-
-        <p class="card-text mb-1"><strong>For Intune (recommended)</strong> — an MSI. On upload,
-            Intune auto-fills the install, uninstall, and detection. Wrap it as-is
-            with the Win32 Content Prep tool.</p>
-        <p class="card-text mb-2">Saves as <code>@_msiFileName</code></p>
         @if (_msiAvailable)
         {
             <a class="btn btn-sm btn-primary" href="download/client-msi">Download client MSI</a>
@@ -58,31 +52,12 @@
                 <code>scripts/Publish-Server.ps1</code> or set <code>Client:MsiPath</code>.
             </span>
         }
-
-        <hr class="my-3" />
-
-        <p class="card-text mb-1"><strong>Manual install</strong> — a self-extracting exe.
-            Double-click on a workstation (UAC) and it installs + launches.</p>
-        <p class="card-text mb-2">Saves as <code>@_installerFileName</code></p>
-        @if (_installerAvailable)
-        {
-            <a class="btn btn-sm btn-outline-primary" href="download/client">Download installer (exe)</a>
-        }
-        else
-        {
-            <span class="text-danger">
-                Exe not bundled with this server build — publish with
-                <code>scripts/Publish-Server.ps1</code> or set <code>Client:InstallerPath</code>.
-            </span>
-        }
     </div>
 </div>
 
 @code {
     private int _printerCount;
     private int _zoneCount;
-    private string _installerFileName = "";
-    private bool _installerAvailable;
     private string _msiFileName = "";
     private bool _msiAvailable;
 
@@ -90,10 +65,6 @@
     {
         _printerCount = (await Printers.GetAllAsync()).Count;
         _zoneCount = (await Zones.GetAllAsync()).Count;
-
-        _installerFileName = ClientInstallerDownload.DownloadFileName(Config);
-        _installerAvailable = File.Exists(
-            ClientInstallerDownload.ResolveInstallerPath(Config, Env.ContentRootPath));
 
         _msiFileName = ClientInstallerDownload.MsiDownloadFileName(Config);
         _msiAvailable = File.Exists(

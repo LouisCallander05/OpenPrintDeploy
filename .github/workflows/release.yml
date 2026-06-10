@@ -44,25 +44,11 @@ jobs:
         run: .\scripts\Publish-Server.ps1 -Version "${{ steps.ver.outputs.version }}"
         shell: powershell
 
-      - name: Publish client tray + installer
-        run: .\scripts\Publish-Client.ps1 -Version "${{ steps.ver.outputs.version }}"
-        shell: powershell
-
-      - name: Zip client artifact
-        shell: powershell
-        run: |
-          Compress-Archive `
-            -Path publish\client\* `
-            -DestinationPath publish\OpenPrintDeploy-client-win-x64.zip `
-            -CompressionLevel Optimal
-
       - name: Create Release + upload assets
         uses: softprops/action-gh-release@v2
         with:
           files: |
             publish/OpenPrintDeploy.Server.msi
-            publish/OpenPrintDeploy.Client.msi
-            publish/OpenPrintDeploy-client-win-x64.zip
           draft: false
           prerelease: false
           generate_release_notes: true

@@ -11,26 +11,9 @@ namespace OpenPrintDeploy.Server.Download;
 /// </summary>
 public static class ClientInstallerDownload
 {
-    // Where Publish-Server.ps1 places the single-file client installer, relative
-    // to the server's content root. Overridable via Client:InstallerPath.
-    public const string DefaultRelativePath = "client/OpenPrintDeploy.Client.Installer.exe";
-
-    // The MSI (for Intune), bundled alongside the exe. Overridable via Client:MsiPath.
+    // Where Publish-Server.ps1 places the client MSI, relative to the server's
+    // content root. Overridable via Client:MsiPath.
     public const string DefaultMsiRelativePath = "client/OpenPrintDeploy.Client.msi";
-
-    /// <summary>Absolute path to the installer the server hands out.</summary>
-    public static string ResolveInstallerPath(IConfiguration cfg, string contentRoot)
-    {
-        var configured = cfg["Client:InstallerPath"];
-        if (!string.IsNullOrWhiteSpace(configured))
-        {
-            return Path.IsPathRooted(configured)
-                ? configured
-                : Path.Combine(contentRoot, configured);
-        }
-
-        return Path.Combine(contentRoot, DefaultRelativePath);
-    }
 
     /// <summary>Absolute path to the client MSI the server hands out.</summary>
     public static string ResolveMsiPath(IConfiguration cfg, string contentRoot)
@@ -45,16 +28,6 @@ public static class ClientInstallerDownload
 
         return Path.Combine(contentRoot, DefaultMsiRelativePath);
     }
-
-    /// <summary>
-    /// Filename offered to the browser: <c>OpenPrintDeploy - &lt;host&gt;.exe</c>.
-    /// The installer turns <c>&lt;host&gt;</c> into <c>http://&lt;host&gt;:5080</c>,
-    /// so this assumes the server is reachable over http on 5080 (the shipped
-    /// default — see appsettings "Urls"). Operators on a different scheme/port
-    /// should hand out the bare installer and pass <c>--server</c> explicitly.
-    /// </summary>
-    public static string DownloadFileName(IConfiguration cfg)
-        => $"OpenPrintDeploy - {ResolveHost(cfg)}.exe";
 
     /// <summary>
     /// Filename offered to the browser for the MSI: <c>OpenPrintDeploy - &lt;host&gt;.msi</c>.

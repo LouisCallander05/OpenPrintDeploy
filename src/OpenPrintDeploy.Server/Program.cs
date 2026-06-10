@@ -194,25 +194,6 @@ app.MapPost("/sync", async (
 .RequireAuthorization(syncPolicy)
 .DisableAntiforgery();
 
-// Hands out the tray-client installer, pre-named "OpenPrintDeploy - <host>.exe"
-// so it configures itself against this server on first run (the installer reads
-// the host out of its own filename). Admin-only, same as the dashboard.
-app.MapGet("/download/client", (IConfiguration cfg, IWebHostEnvironment env) =>
-{
-    var path = ClientInstallerDownload.ResolveInstallerPath(cfg, env.ContentRootPath);
-    if (!File.Exists(path))
-    {
-        return Results.Problem(
-            detail: $"The client installer isn't bundled with this server build (looked in '{path}'). " +
-                    "Publish with scripts/Publish-Server.ps1 (it bundles the installer), or point " +
-                    "Client:InstallerPath at a built OpenPrintDeploy.Client.Installer.exe.",
-            statusCode: StatusCodes.Status404NotFound);
-    }
-
-    var fileName = ClientInstallerDownload.DownloadFileName(cfg);
-    return Results.File(path, "application/octet-stream", fileDownloadName: fileName);
-})
-.RequireAuthorization(AuthPolicies.Admin);
 
 // Hands out the tray-client MSI, pre-named "OpenPrintDeploy - <host>.msi". Wrap
 // it as-is for Intune: the MSI auto-fills install/uninstall/detection on upload,

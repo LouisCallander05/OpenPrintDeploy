@@ -85,6 +85,15 @@ public sealed class SyncCoordinator : IDisposable
         }
     }
 
+    /// <summary>Clears stored credentials and drops the current HTTP client.</summary>
+    public void SignOut()
+    {
+        _auth.SignOut();
+        _http?.Dispose();
+        _http = null;
+        _orchestrator = null;
+    }
+
     private async Task<SyncOutcome> SyncWithCurrentClientAsync(CancellationToken ct)
     {
         var managed = _state.Load();

@@ -18,6 +18,7 @@ public partial class App : Application
     private Forms.ToolStripMenuItem? _identityItem;
     private Forms.ToolStripMenuItem? _signInItem;
     private DispatcherTimer? _timer;
+    private bool _isSignedIn;
 
     /// <summary>
     /// CLI flag the MSI's post-install action passes (as SYSTEM) to bring the
@@ -78,9 +79,17 @@ public partial class App : Application
         menu.Items.Add(_identityItem);
         _signInItem = new Forms.ToolStripMenuItem("Sign in…", null, async (_, _) =>
         {
-            _coordinator?.SignIn();
-            _ = RefreshAuthMenuAsync();
-            await SyncAsync(manual: true);
+            if (_isSignedIn)
+            {
+                _coordinator?.SignOut();
+                _ = RefreshAuthMenuAsync();
+            }
+            else
+            {
+                _coordinator?.SignIn();
+                _ = RefreshAuthMenuAsync();
+                await SyncAsync(manual: true);
+            }
         })
         {
             Visible = false,
@@ -139,6 +148,8 @@ public partial class App : Application
             identityItem.Text = status.User is { Length: > 0 } user
                 ? $"Signed in as {user}"
                 : status.Integrated ? "Signed in" : "Not signed in";
+            _isSignedIn = status.CanSignIn && status.User is { Length: > 0 };
+            signInItem.Text = _isSignedIn ? "Sign out" : "Sign in…";
             signInItem.Visible = status.CanSignIn;
         });
     }
