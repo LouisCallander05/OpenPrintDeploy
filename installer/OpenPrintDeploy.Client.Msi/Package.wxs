@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Per-machine MSI for the Open Print Deploy tray client.
+
+  Built for Intune: because it's an MSI, uploading the .intunewin auto-fills the
+  install command, uninstall command, and detection rule (the MSI product code).
+
+  The server URL is configured one of two ways, both surviving into Intune:
+    * msiexec property:  msiexec /i "OpenPrintDeploy.Client.msi" SERVER="http://host:5080"
+    * the MSI filename:  name it "OpenPrintDeploy - host.msi" and the tray derives
+      http://host:5080 from it. The MSI records its own path (OriginalDatabase)
+      and the SERVER property in the registry; the tray reads them at startup
+      (see TraySettings.cs). No custom action needed.
+
+  Built by scripts/Publish-Client-Msi.ps1, which harvests the self-contained
+  win-x64 tray publish folder passed as $(var.HarvestDir).
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+
+  <Package
+      Name="Open Print Deploy Client"
+      Manufacturer="OpenPrintDeploy"
+      Version="$(var.ProductVersion)"
+      Scope="perMachine"
+      Compressed="yes"
+      InstallerVersion="500"
+      UpgradeCode="8F2C4A1E-6B3D-4F59-A0C7-1E9D2B5F8A40">
+
+    <MajorUpgrade
+        AllowSameVersionUpgrades="yes"
+        DowngradeErrorMessage="A newer version of Open Print Deploy Client is already installed. Uninstall it first to install an older build." />
+
+    <MediaTemplate EmbedCab="yes" />
+
+    <Property Id="ARPHELPLINK" Value="https://github.com/OpenPrintDeploy/OpenPrintDeploy" />
+
+    <!-- Optional server URL. msiexec /i ... SERVER="http://host:5080". When blank,
+         the tray derives the server from this MSI's filename (recorded below as
+         InstallerSource). Public + Secure so it passes through to the deferred
+         (system-context) install. -->
+    <Property Id="SERVER" Secure="yes" />
+
+    <Feature Id="Main" Title="Open Print Deploy Client" Level="1">
+      <ComponentGroupRef Id="TrayFiles" />
+      <ComponentRef Id="ClientConfig" />
+      <ComponentRef Id="AutoStartRunKey" />
+    </Feature>
+
+    <!-- C:\Program Files\OpenPrintDeploy\Tray -->
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="OpdRootFolder" Name="OpenPrintDeploy">
+        <Directory Id="INSTALLFOLDER" Name="Tray" />
+      </Directory>
+    </StandardDirectory>
+
+    <!-- Terminate any running tray so its files aren't locked during an upgrade
+         (each user session has its own tray.exe; this is the MSI equivalent of
+         the old installer's KillRunningTray). No reboot prompt. -->
+    <util:CloseApplication
+        Id="CloseTray"
+        Target="OpenPrintDeploy.Client.Tray.exe"
+        TerminateProcess="0"
+        RebootPrompt="no" />
+
+    <!-- All self-contained tray files. -->
+    <ComponentGroup Id="TrayFiles" Directory="INSTALLFOLDER">
+      <Files Include="$(var.HarvestDir)\**" />
+    </ComponentGroup>
+
+    <!-- Config the tray reads at startup: the explicit SERVER (if any), this
+         MSI's own path (for the filename-derived server), and a version marker.
+         Version is the keypath so it's always present. -->
+    <DirectoryRef Id="INSTALLFOLDER">
+      <Component Id="ClientConfig" Bitness="always64">
+        <RegistryValue Root="HKLM" Key="SOFTWARE\OpenPrintDeploy\Client"
+                       Name="Version" Type="string" Value="$(var.ProductVersion)" KeyPath="yes" />
+        <RegistryValue Root="HKLM" Key="SOFTWARE\OpenPrintDeploy\Client"
+                       Name="ServerBaseAddress" Type="string" Value="[SERVER]" />
+        <RegistryValue Root="HKLM" Key="SOFTWARE\OpenPrintDeploy\Client"
+                       Name="InstallerSource" Type="string" Value="[OriginalDatabase]" />
+      </Component>
+    </DirectoryRef>
+
+    <!-- Per-machine auto-start: the tray launches for every user at logon. Same
+         Run value name as the EXE installer so the two never double-register. -->
+    <DirectoryRef Id="INSTALLFOLDER">
+      <Component Id="AutoStartRunKey" Bitness="always64">
+        <RegistryValue Root="HKLM" Key="SOFTWARE\Microsoft\Windows\CurrentVersion\Run"
+                       Name="OpenPrintDeployTray" Type="string"
+                       Value="&quot;[INSTALLFOLDER]OpenPrintDeploy.Client.Tray.exe&quot;" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+  </Package>
+</Wix>

@@ -17,9 +17,10 @@ publish/
 *.msi
 *.wixpdb
 *.wixobj
-# The WiX project folder ends in ".Msi", which *.msi matches case-insensitively
-# on Windows. Keep its source tracked (built .msi outputs land in bin/ anyway).
+# The WiX project folders end in ".Msi", which *.msi matches case-insensitively
+# on Windows. Keep their source tracked (built .msi outputs land in bin/ anyway).
 !installer/OpenPrintDeploy.Server.Msi/
+!installer/OpenPrintDeploy.Client.Msi/
 
 # Test results
 TestResults/

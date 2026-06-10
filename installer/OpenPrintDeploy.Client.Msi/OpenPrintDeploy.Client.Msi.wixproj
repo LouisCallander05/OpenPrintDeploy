@@ -1,0 +1,28 @@
+<Project Sdk="WixToolset.Sdk/5.0.2">
+
+  <PropertyGroup>
+    <OutputName>OpenPrintDeploy.Client</OutputName>
+    <OutputType>Package</OutputType>
+    <!-- x64: tray is win-x64 self-contained; components land in Program Files. -->
+    <Platform>x64</Platform>
+
+    <!-- Directory.Build.props sets TreatWarningsAsErrors for the C# projects; the
+         WiX SDK maps that to -wx where benign harvest warnings would fail. Opt out. -->
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+
+    <!-- Publish-Client-Msi.ps1 passes these on the dotnet build command line:
+           -p:HarvestDir=<abs path to the self-contained tray publish folder>
+           -p:ProductVersion=<numeric major.minor.build>
+         Defaults keep a bare `dotnet build` working for quick local checks. -->
+    <HarvestDir Condition="'$(HarvestDir)' == ''">$(MSBuildThisFileDirectory)..\..\publish\client-tray</HarvestDir>
+    <ProductVersion Condition="'$(ProductVersion)' == ''">0.0.0</ProductVersion>
+
+    <DefineConstants>HarvestDir=$(HarvestDir);ProductVersion=$(ProductVersion)</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- util:CloseApplication (terminate the running tray before upgrade). -->
+    <PackageReference Include="WixToolset.Util.wixext" Version="5.0.2" />
+  </ItemGroup>
+
+</Project>
