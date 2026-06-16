@@ -116,8 +116,8 @@ public sealed class SyncDiagnosticsServiceTests : IAsyncDisposable
         public FakeDirectory(params string[] groupSids)
             => _groups = new HashSet<string>(groupSids, StringComparer.Ordinal);
 
-        public Task<IReadOnlySet<string>> GetGroupSidsAsync(string username, CancellationToken ct = default)
-            => Task.FromResult(_groups);
+        public Task<GroupResolution> GetGroupSidsAsync(string username, CancellationToken ct = default)
+            => Task.FromResult(GroupResolution.Resolved(_groups));
 
         public Task<IReadOnlyList<DirectoryGroup>> SearchGroupsAsync(string query, int limit, CancellationToken ct = default)
             => Task.FromResult<IReadOnlyList<DirectoryGroup>>([]);

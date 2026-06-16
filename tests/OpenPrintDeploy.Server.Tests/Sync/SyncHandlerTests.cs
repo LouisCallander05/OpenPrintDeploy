@@ -71,6 +71,36 @@ public sealed class SyncHandlerTests : IAsyncDisposable
         var response = await handler.HandleAsync(Principal(@"EDU001\jsmith", "S-1-5-21-999-1"), null, default);
 
         Assert.Empty(response.Printers);
+        Assert.True(response.Authoritative);
+    }
+
+    [Fact]
+    public async Task Handle_ReturnsNonAuthoritative_WhenDirectoryUnavailable()
+    {
+        await SeedZoneAsync(Sid, Unc);
+        // Token carries no groups, so the handler falls back to the directory —
+        // which is in an outage. The response must NOT be an authoritative empty
+        // set, or the client would uninstall every printer it manages.
+        var handler = NewHandler(new FakeDirectory(available: false));
+
+        var response = await handler.HandleAsync(Principal(@"EDU002\student"), null, default);
+
+        Assert.Empty(response.Printers);
+        Assert.False(response.Authoritative);
+    }
+
+    [Fact]
+    public async Task Handle_ReturnsAuthoritativeEmpty_WhenDirectoryHasNoGroups()
+    {
+        await SeedZoneAsync(Sid, Unc);
+        // Directory is reachable but the user genuinely has no groups: an
+        // authoritative empty set, so the client legitimately removes printers.
+        var handler = NewHandler(new FakeDirectory());
+
+        var response = await handler.HandleAsync(Principal(@"EDU002\student"), null, default);
+
+        Assert.Empty(response.Printers);
+        Assert.True(response.Authoritative);
     }
 
     private SyncHandler NewHandler(IDirectoryService directory)
@@ -111,16 +141,18 @@ public sealed class SyncHandlerTests : IAsyncDisposable
     {
         private readonly IReadOnlySet<string>? _groups;
         private readonly bool _mustNotBeCalled;
+        private readonly bool _available;
 
-        public FakeDirectory(string? groups = null, bool mustNotBeCalled = false)
+        public FakeDirectory(string? groups = null, bool mustNotBeCalled = false, bool available = true)
         {
             _groups = groups is null ? null : new HashSet<string>([groups], StringComparer.Ordinal);
             _mustNotBeCalled = mustNotBeCalled;
+            _available = available;
         }
 
         public bool WasCalled { get; private set; }
 
-        public Task<IReadOnlySet<string>> GetGroupSidsAsync(string username, CancellationToken ct = default)
+        public Task<GroupResolution> GetGroupSidsAsync(string username, CancellationToken ct = default)
         {
             WasCalled = true;
             if (_mustNotBeCalled)
@@ -128,7 +160,9 @@ public sealed class SyncHandlerTests : IAsyncDisposable
                 throw new InvalidOperationException("Directory must not be consulted when the token carries groups.");
             }
 
-            return Task.FromResult<IReadOnlySet<string>>(_groups ?? new HashSet<string>(StringComparer.Ordinal));
+            return Task.FromResult(_available
+                ? GroupResolution.Resolved(_groups ?? new HashSet<string>(StringComparer.Ordinal))
+                : GroupResolution.Unavailable);
         }
 
         public Task<IReadOnlyList<DirectoryGroup>> SearchGroupsAsync(string query, int limit, CancellationToken ct = default)

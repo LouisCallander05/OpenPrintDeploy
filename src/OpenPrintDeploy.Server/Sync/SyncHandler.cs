@@ -48,8 +48,23 @@ public sealed class SyncHandler
         var source = "token";
         if (groupSids.Count == 0)
         {
-            groupSids = await _directory.GetGroupSidsAsync(username, ct);
+            var resolution = await _directory.GetGroupSidsAsync(username, ct);
             source = "directory";
+
+            // A directory outage must not be reported as "you have no printers":
+            // an empty authoritative set would tell the client to uninstall
+            // everything it manages. Send a non-authoritative response so the
+            // client leaves the user's current printers untouched until the
+            // directory recovers.
+            if (!resolution.Available)
+            {
+                _logger.LogWarning(
+                    "Sync for {User} on {Machine}: directory unavailable; returning non-authoritative response (no changes on the client).",
+                    username, machineName ?? "(unknown)");
+                return new SyncResponseDto([], Authoritative: false);
+            }
+
+            groupSids = resolution.Sids;
         }
 
         var context = new EvaluationContext(groupSids);

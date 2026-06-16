@@ -20,22 +20,25 @@ public sealed class StubDirectoryServiceTests
     [Fact]
     public async Task ResolvesConfiguredUser()
     {
-        var sids = await Create().GetGroupSidsAsync("hruser");
-        Assert.Equal(["S-1-5-21-DEMO-HR"], sids);
+        var resolution = await Create().GetGroupSidsAsync("hruser");
+        Assert.Equal(["S-1-5-21-DEMO-HR"], resolution.Sids);
+        Assert.True(resolution.Available);
     }
 
     [Fact]
     public async Task NormalizesDomainQualifiedAndUpnNames()
     {
         var svc = Create();
-        Assert.Contains("S-1-5-21-DEMO-HR", await svc.GetGroupSidsAsync(@"CORP\hruser"));
-        Assert.Contains("S-1-5-21-DEMO-HR", await svc.GetGroupSidsAsync("hruser@corp.local"));
+        Assert.Contains("S-1-5-21-DEMO-HR", (await svc.GetGroupSidsAsync(@"CORP\hruser")).Sids);
+        Assert.Contains("S-1-5-21-DEMO-HR", (await svc.GetGroupSidsAsync("hruser@corp.local")).Sids);
     }
 
     [Fact]
-    public async Task UnknownUser_ReturnsEmpty()
+    public async Task UnknownUser_ReturnsEmptyButAvailable()
     {
-        Assert.Empty(await Create().GetGroupSidsAsync("nobody"));
+        var resolution = await Create().GetGroupSidsAsync("nobody");
+        Assert.Empty(resolution.Sids);
+        Assert.True(resolution.Available);
     }
 
     [Fact]

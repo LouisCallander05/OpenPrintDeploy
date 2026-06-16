@@ -9,24 +9,40 @@ namespace OpenPrintDeploy.Client.Tray;
 /// non-empty <c>Server:BaseAddress</c> in <c>appsettings.json</c> (written by the
 /// EXE installer); then the registry (written by the MSI installer) — an explicit
 /// <c>ServerBaseAddress</c>, or derived from the MSI's own filename
-/// (<c>OpenPrintDeploy - host.msi</c> → <c>http://host:5080</c>).
+/// (<c>OpenPrintDeploy - host.msi</c> → <c>https://host:5443</c>). Any explicit
+/// URL is honoured as-is (so an <c>http://</c> server still works); only the
+/// filename-derived fallback defaults to HTTPS.
+///
+/// When the server uses a self-signed certificate, set the server's certificate
+/// thumbprint (<c>OPD_SERVER_CERT_THUMBPRINT</c>, <c>Server:CertificateThumbprint</c>,
+/// or the registry <c>ServerCertificateThumbprint</c>) so the tray trusts exactly
+/// that certificate without it being in the machine trust store.
 /// </summary>
 public sealed class TraySettings
 {
     private const string RegistryKey = @"SOFTWARE\OpenPrintDeploy\Client";
 
-    // Matches the EXE installer's filename convention (Program.cs).
+    // Matches the EXE installer's filename convention (Program.cs). The derived
+    // fallback defaults to HTTPS so a freshly installed client prefers TLS.
     private const string FileNameServerDelimiter = " - ";
-    private const string FileNameServerScheme = "http";
-    private const int FileNameServerPort = 5080;
+    private const string FileNameServerScheme = "https";
+    private const int FileNameServerPort = 5443;
 
     public required Uri ServerBaseAddress { get; init; }
 
     public required TimeSpan SyncInterval { get; init; }
 
+    /// <summary>
+    /// Thumbprint of the server's TLS certificate to pin, or null for normal
+    /// chain validation (an operator/CA-issued certificate or one already trusted
+    /// by the machine).
+    /// </summary>
+    public string? ServerCertificateThumbprint { get; init; }
+
     public static TraySettings Load()
     {
         var url = Environment.GetEnvironmentVariable("OPD_SERVER_URL");
+        var thumbprint = Environment.GetEnvironmentVariable("OPD_SERVER_CERT_THUMBPRINT");
         var intervalMinutes = 5;
 
         var path = Path.Combine(AppContext.BaseDirectory, "appsettings.json");
@@ -39,6 +55,12 @@ public sealed class TraySettings
                     && server.TryGetProperty("BaseAddress", out var baseAddress))
                 {
                     url = baseAddress.GetString();
+                }
+
+                if (string.IsNullOrWhiteSpace(thumbprint)
+                    && server.TryGetProperty("CertificateThumbprint", out var pin))
+                {
+                    thumbprint = pin.GetString();
                 }
 
                 if (server.TryGetProperty("SyncIntervalMinutes", out var interval)
@@ -57,6 +79,11 @@ public sealed class TraySettings
             url = ReadServerFromRegistry();
         }
 
+        if (string.IsNullOrWhiteSpace(thumbprint))
+        {
+            thumbprint = ReadRegistryValue("ServerCertificateThumbprint");
+        }
+
         if (string.IsNullOrWhiteSpace(url))
         {
             throw new InvalidOperationException(
@@ -68,6 +95,7 @@ public sealed class TraySettings
         {
             ServerBaseAddress = new Uri(url, UriKind.Absolute),
             SyncInterval = TimeSpan.FromMinutes(intervalMinutes),
+            ServerCertificateThumbprint = string.IsNullOrWhiteSpace(thumbprint) ? null : thumbprint.Trim(),
         };
     }
 
@@ -101,8 +129,22 @@ public sealed class TraySettings
         }
     }
 
+    /// <summary>Reads a single string value from the client registry key, or null if absent/unreadable.</summary>
+    private static string? ReadRegistryValue(string name)
+    {
+        try
+        {
+            using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(RegistryKey);
+            return key?.GetValue(name) as string;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     /// <summary>
-    /// "…\OpenPrintDeploy - printsrv01.corp.local.msi" → "http://printsrv01.corp.local:5080".
+    /// "…\OpenPrintDeploy - printsrv01.corp.local.msi" → "https://printsrv01.corp.local:5443".
     /// Returns null when the name carries no "<c> - </c>" host segment.
     /// </summary>
     private static string? DeriveServerFromInstallerName(string? installerPath)

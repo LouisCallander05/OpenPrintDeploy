@@ -97,6 +97,11 @@ public sealed class SyncEndpointTests : IClassFixture<SyncEndpointTests.TestServ
                     ["Auth:Dev:DefaultUser"] = "hruser",
                     ["Directory:Stub:Users:hruser:0"] = "S-1-5-21-DEMO-HR",
                     ["Directory:Stub:Users:enguser:0"] = "S-1-5-21-DEMO-ENG",
+                    // Keep the in-process TestServer on plain HTTP. Without this, an
+                    // admin-rights host (e.g. a Windows CI runner) would provision a
+                    // cert, RequireHttps would turn on, and these HTTP requests would
+                    // get 307-redirected. In-memory config wins over appsettings.
+                    ["Https:Enabled"] = "false",
                 }));
         }
 

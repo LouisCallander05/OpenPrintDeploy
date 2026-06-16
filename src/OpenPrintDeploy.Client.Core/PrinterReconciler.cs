@@ -12,6 +12,8 @@ public sealed record ReconcileResult(
 /// installed last time. Only printers we previously deployed are eligible for
 /// removal, so a user's own manually-added printers are never touched.
 /// UNC comparison is case-insensitive, matching Windows printer connections.
+/// A non-authoritative response (directory/server unavailable) yields an empty
+/// plan — printers are never removed on a state the server couldn't confirm.
 /// </summary>
 public static class PrinterReconciler
 {
@@ -23,6 +25,16 @@ public static class PrinterReconciler
         ArgumentNullException.ThrowIfNull(desired);
         ArgumentNullException.ThrowIfNull(previouslyManaged);
         ArgumentNullException.ThrowIfNull(currentlyInstalled);
+
+        // A non-authoritative response means the server could not resolve the
+        // user (directory/DC outage, empty/garbled body). We can't tell "you
+        // should have no printers" from "I don't know right now", so we make NO
+        // changes — never tear down printers we can't confirm are unwanted.
+        // Printers re-converge on the next sync once the directory recovers.
+        if (!desired.Authoritative)
+        {
+            return new ReconcileResult([], []);
+        }
 
         var desiredUncs = desired.Printers
             .Select(p => p.UncPath)

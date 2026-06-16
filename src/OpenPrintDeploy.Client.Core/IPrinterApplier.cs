@@ -1,3 +1,5 @@
+using OpenPrintDeploy.Shared.Sync;
+
 namespace OpenPrintDeploy.Client.Core;
 
 /// <summary>
@@ -8,7 +10,25 @@ namespace OpenPrintDeploy.Client.Core;
 /// </summary>
 public interface IPrinterApplier
 {
-    Task ApplyAsync(ReconcileResult plan, CancellationToken ct = default);
+    /// <summary>
+    /// Applies the plan best-effort: each add is independent, so one failing
+    /// printer (a name clash with an orphaned printer, an unreachable server, a
+    /// point-and-print block) never stops the others. Returns what actually
+    /// happened so the caller can persist only the printers that installed and
+    /// surface the ones that didn't.
+    /// </summary>
+    Task<ApplyOutcome> ApplyAsync(ReconcileResult plan, CancellationToken ct = default);
 
     Task<IReadOnlyList<string>> EnumerateInstalledAsync(CancellationToken ct = default);
 }
+
+/// <summary>The result of applying a plan: the adds that succeeded and the ones that failed.</summary>
+public sealed record ApplyOutcome(
+    IReadOnlyList<PrinterDto> Added,
+    IReadOnlyList<PrinterApplyError> Failed)
+{
+    public static ApplyOutcome Empty { get; } = new([], []);
+}
+
+/// <summary>A single printer that failed to install, with the OS reason.</summary>
+public sealed record PrinterApplyError(PrinterDto Printer, string Message);

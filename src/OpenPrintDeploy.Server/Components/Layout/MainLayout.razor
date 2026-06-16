@@ -1,4 +1,9 @@
 @inherits LayoutComponentBase
+@using Microsoft.AspNetCore.Components.Authorization
+@using OpenPrintDeploy.Server.Auth
+@inject AdminAccessEvaluator Evaluator
+@inject AuthenticationStateProvider AuthState
+@inject NavigationManager Nav
 
 <div class="page">
     <div class="sidebar">
@@ -28,3 +33,24 @@
     <a href="" class="reload">Reload</a>
     <a class="dismiss">🗙</a>
 </div>
+
+@code {
+    // First-run gate: while no admin is configured (the system is open to any
+    // signed-in user), force every admin page to the /setup onboarding so the
+    // operator names an admin group before doing anything else. Once configured,
+    // this never fires. /setup itself is exempt to avoid a redirect loop.
+    protected override async Task OnInitializedAsync()
+    {
+        var state = await AuthState.GetAuthenticationStateAsync();
+        if (state.User.Identity?.IsAuthenticated != true || !Evaluator.GetEffective().IsOpen)
+        {
+            return;
+        }
+
+        var path = Nav.ToBaseRelativePath(Nav.Uri).Split('?', '#')[0].Trim('/');
+        if (!path.Equals("setup", StringComparison.OrdinalIgnoreCase))
+        {
+            Nav.NavigateTo("setup");
+        }
+    }
+}

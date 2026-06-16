@@ -35,7 +35,7 @@ public sealed class SyncDiagnosticsService
         var account = DirectoryUsername.Normalize(username);
 
         // Same call the real sync's fallback makes.
-        var groupSids = await _directory.GetGroupSidsAsync(username, ct);
+        var groupSids = (await _directory.GetGroupSidsAsync(username, ct)).Sids;
         return await BuildAsync(account, groupSids, ct);
     }
 

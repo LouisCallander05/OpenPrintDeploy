@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using OpenPrintDeploy.Client.Core;
+using OpenPrintDeploy.Shared.Sync;
 
 namespace OpenPrintDeploy.Client.Tray;
 
@@ -14,17 +15,25 @@ public sealed class WindowsPrinterApplier : IPrinterApplier
 {
     private const uint PrinterEnumConnections = 0x00000004;
 
-    public Task ApplyAsync(ReconcileResult plan, CancellationToken ct = default)
+    public Task<ApplyOutcome> ApplyAsync(ReconcileResult plan, CancellationToken ct = default)
     {
+        var added = new List<PrinterDto>();
+        var failed = new List<PrinterApplyError>();
+
         foreach (var printer in plan.ToAdd)
         {
             ct.ThrowIfCancellationRequested();
-            if (!AddPrinterConnection(printer.UncPath))
+            // Best-effort per printer: a single failed add (a name clash with an
+            // orphaned printer, an unreachable server, a point-and-print block)
+            // must not stop the rest of the set from installing.
+            if (AddPrinterConnection(printer.UncPath))
             {
-                var code = Marshal.GetLastWin32Error();
-                var reason = new Win32Exception(code).Message;
-                throw new Win32Exception(code,
-                    $"AddPrinterConnection failed for {printer.UncPath}: {reason}");
+                added.Add(printer);
+            }
+            else
+            {
+                var reason = new Win32Exception(Marshal.GetLastWin32Error()).Message;
+                failed.Add(new PrinterApplyError(printer, reason));
             }
         }
 
@@ -35,7 +44,7 @@ public sealed class WindowsPrinterApplier : IPrinterApplier
             DeletePrinterConnection(unc);
         }
 
-        return Task.CompletedTask;
+        return Task.FromResult(new ApplyOutcome(added, failed));
     }
 
     public Task<IReadOnlyList<string>> EnumerateInstalledAsync(CancellationToken ct = default)
@@ -73,9 +82,16 @@ public sealed class WindowsPrinterApplier : IPrinterApplier
             {
                 var ptr = IntPtr.Add(buffer, i * size);
                 var info = Marshal.PtrToStructure<PrinterInfo2>(ptr);
-                if (!string.IsNullOrWhiteSpace(info.pServerName) && !string.IsNullOrWhiteSpace(info.pShareName))
+
+                // For a per-user printer CONNECTION (which is all this app creates),
+                // the full UNC is carried in pPrinterName — e.g. "\\srv\share".
+                // pServerName/pShareName are typically empty for connections, so
+                // reconstructing the UNC from them misses every printer and makes
+                // the reconciler re-add the whole set on every sync. Match the exact
+                // string we passed to AddPrinterConnection instead.
+                if (!string.IsNullOrWhiteSpace(info.pPrinterName))
                 {
-                    result.Add($"\\\\{info.pServerName}\\{info.pShareName}");
+                    result.Add(info.pPrinterName.Trim());
                 }
             }
 

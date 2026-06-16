@@ -8,8 +8,12 @@ namespace OpenPrintDeploy.Server.Auth;
 /// <summary>
 /// Development-only authentication: takes the username from an
 /// <c>X-Dev-User</c> request header, falling back to a configured default.
-/// Stands in for Negotiate on dev machines that have no Kerberos. Never
-/// registered when <c>Auth:Mode</c> is <c>Negotiate</c>.
+/// Stands in for Negotiate on dev machines that have no Kerberos. Registered
+/// ONLY when <see cref="IHostEnvironment.IsDevelopment"/> (see
+/// <c>AuthExtensions.AddAppAuthentication</c>); production uses Basic/Negotiate
+/// and never sees this scheme. As a backstop, <c>Program</c> refuses to start if
+/// it finds itself running as a Windows service in the Development environment —
+/// the only way this header-spoof path could otherwise reach production.
 /// </summary>
 public sealed class DevAuthenticationHandler : AuthenticationHandler<AuthenticationSchemeOptions>
 {

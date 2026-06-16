@@ -101,15 +101,40 @@
             <p class="card-text text-success mb-1">
                 HTTPS is enabled on port @HttpsState.Port (HTTPS for <code>@HttpsState.Host</code>).
             </p>
-            @if (HttpsState.SelfSigned)
+            @if (HttpsState.Enforced)
             {
-                <p class="card-text text-muted mb-0">
-                    Self-signed certificate <code>@HttpsState.Thumbprint</code>.
+                <p class="card-text text-success mb-1">
+                    Plain HTTP is <strong>redirected to HTTPS</strong> (HSTS on). Set <code>Https:HttpPort</code>
+                    to <code>0</code> to stop listening on HTTP entirely.
                 </p>
             }
             else
             {
-                <p class="card-text text-muted mb-0">Certificate <code>@HttpsState.Thumbprint</code>.</p>
+                <p class="card-text text-warning mb-1">
+                    HTTP is still served alongside HTTPS for rollout. Once clients trust the certificate and
+                    use HTTPS, set <code>Https:RequireHttps</code> to <code>true</code> to redirect and enforce TLS.
+                </p>
+            }
+            @if (HttpsState.SelfSigned)
+            {
+                <p class="card-text text-muted mb-0">
+                    Self-signed certificate <code>@HttpsState.Thumbprint</code>.
+                    Pin this thumbprint on clients (<code>CERTTHUMBPRINT=</code> on the client MSI).
+                    @if (HttpsState.Expiry is { } selfExpiry)
+                    {
+                        <text> Valid until <strong>@selfExpiry.ToString("d")</strong> — pins stay valid until then.</text>
+                    }
+                </p>
+            }
+            else
+            {
+                <p class="card-text text-muted mb-0">
+                    Certificate <code>@HttpsState.Thumbprint</code>.
+                    @if (HttpsState.Expiry is { } caExpiry)
+                    {
+                        <text> Valid until <strong>@caExpiry.ToString("d")</strong>.</text>
+                    }
+                </p>
             }
         }
         else if (HttpsState.Enabled)

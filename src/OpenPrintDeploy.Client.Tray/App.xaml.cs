@@ -57,7 +57,8 @@ public partial class App : Application
         // it from a background continuation during a sync, so marshal explicitly.
         _authenticator = new TrayAuthenticator(
             settings.ServerBaseAddress,
-            ctx => Dispatcher.Invoke(() => CredentialPrompt.Show(ctx)));
+            ctx => Dispatcher.Invoke(() => CredentialPrompt.Show(ctx)),
+            settings.ServerCertificateThumbprint);
         _coordinator = new SyncCoordinator(_authenticator);
 
         var menu = new Forms.ContextMenuStrip { ShowImageMargin = false };
@@ -156,9 +157,11 @@ public partial class App : Application
 
     /// <param name="manual">
     /// True only for an explicit "Sync now" / "Sign in" action. Background syncs
-    /// (logon + the timer) pass false and stay completely silent. We only ever
-    /// notify on a successful manual sync — failures (including "can't reach the
-    /// server") never raise a notification, so an offline device doesn't nag.
+    /// (logon + the timer) pass false and stay completely silent — they never
+    /// raise a notification, so the tray doesn't interrupt the user (and a fixed
+    /// set of printers doesn't toast on every cycle). Only an explicit "Sync now"
+    /// shows feedback, and only on success — failures stay quiet so an offline
+    /// device doesn't nag.
     /// </param>
     private async Task SyncAsync(bool manual = false)
     {
@@ -169,16 +172,7 @@ public partial class App : Application
 
         var outcome = await _coordinator.RunOnceAsync();
 
-        // Always notify when printers are newly installed, even on background syncs.
-        if (outcome.Ok && outcome.AddedNames.Count > 0)
-        {
-            var text = outcome.AddedNames.Count == 1
-                ? $"Printer added: {outcome.AddedNames[0]}"
-                : $"{outcome.AddedNames.Count} printers added.";
-            TrayBalloon.Show(_notifyIcon, Branding.ProductName, text, _balloonIcon, 4000);
-            return;
-        }
-
+        // Background syncs are silent. Everything below is for "Sync now" only.
         if (!manual)
         {
             return;
@@ -186,9 +180,27 @@ public partial class App : Application
 
         if (outcome.Ok)
         {
-            TrayBalloon.Show(
-                _notifyIcon, Branding.ProductName,
-                $"{outcome.PrinterCount} printer(s) in sync.", _balloonIcon, 3000);
+            var text = outcome.AddedNames.Count switch
+            {
+                0 => $"{outcome.PrinterCount} printer(s) in sync.",
+                1 => $"Printer added: {outcome.AddedNames[0]}",
+                _ => $"{outcome.AddedNames.Count} printers added.",
+            };
+
+            // Some printers installed, others didn't (e.g. a conflict with an
+            // orphaned printer) — say so rather than claim a clean sync.
+            if (outcome.FailedNames.Count > 0)
+            {
+                _notifyIcon.ShowBalloonTip(
+                    6000, Branding.ProductName,
+                    $"{text} {outcome.FailedNames.Count} couldn’t be installed: "
+                        + string.Join(", ", outcome.FailedNames),
+                    Forms.ToolTipIcon.Warning);
+            }
+            else
+            {
+                TrayBalloon.Show(_notifyIcon, Branding.ProductName, text, _balloonIcon, 3000);
+            }
         }
         else
         {

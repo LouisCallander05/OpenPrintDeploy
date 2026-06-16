@@ -24,16 +24,23 @@ public sealed class SyncApiClient
         using var response = await _http.PostAsJsonAsync("sync", new SyncRequestDto(machineName), ct);
         response.EnsureSuccessStatusCode();
         var result = await response.Content.ReadFromJsonAsync<SyncResponseDto>(ct);
-        return result ?? new SyncResponseDto([]);
+        // A 200 with an empty/unparseable body is a server hiccup, not an
+        // authoritative "you have no printers" — mark it non-authoritative so the
+        // reconciler makes no changes rather than uninstalling everything.
+        return result ?? new SyncResponseDto([], Authoritative: false);
     }
 
     /// <summary>
     /// Builds an <see cref="HttpClient"/> that sends the calling user's Windows
     /// credentials (Kerberos/NTLM) — the basis for "sync as the signed-in user".
+    /// When <paramref name="pinnedThumbprint"/> is set, the server's TLS
+    /// certificate is trusted only if its thumbprint matches (so a self-signed
+    /// cert works without distributing it to the machine trust store).
     /// </summary>
-    public static HttpClient CreateDefaultCredentialsClient(Uri baseAddress)
+    public static HttpClient CreateDefaultCredentialsClient(Uri baseAddress, string? pinnedThumbprint = null)
     {
         var handler = new HttpClientHandler { UseDefaultCredentials = true };
+        ApplyCertificatePinning(handler, pinnedThumbprint);
         return new HttpClient(handler) { BaseAddress = baseAddress };
     }
 
@@ -45,12 +52,31 @@ public sealed class SyncApiClient
     /// validates the NTLM response against a domain controller. The credential's
     /// <c>UserName</c> should be <c>DOMAIN\user</c> or <c>user@domain</c>.
     /// </summary>
-    public static HttpClient CreateExplicitCredentialsClient(Uri baseAddress, NetworkCredential credential)
+    public static HttpClient CreateExplicitCredentialsClient(
+        Uri baseAddress, NetworkCredential credential, string? pinnedThumbprint = null)
     {
         // Scope the credential to this server + Negotiate so it's never offered
         // anywhere else, and so a default-credentials handler isn't used instead.
         var cache = new CredentialCache { { baseAddress, "Negotiate", credential } };
         var handler = new HttpClientHandler { Credentials = cache };
+        ApplyCertificatePinning(handler, pinnedThumbprint);
         return new HttpClient(handler) { BaseAddress = baseAddress };
+    }
+
+    /// <summary>
+    /// Pins the server certificate to <paramref name="pinnedThumbprint"/> when one
+    /// is configured; otherwise leaves the platform's default chain validation in
+    /// place. The callback only ever <em>narrows</em> trust to the exact pinned
+    /// leaf — it never blanket-accepts an untrusted certificate.
+    /// </summary>
+    private static void ApplyCertificatePinning(HttpClientHandler handler, string? pinnedThumbprint)
+    {
+        if (string.IsNullOrWhiteSpace(pinnedThumbprint))
+        {
+            return;
+        }
+
+        handler.ServerCertificateCustomValidationCallback =
+            (_, certificate, _, _) => CertificatePinning.Matches(certificate, pinnedThumbprint);
     }
 }

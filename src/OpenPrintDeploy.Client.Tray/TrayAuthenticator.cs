@@ -33,6 +33,7 @@ public readonly record struct AuthStatus(bool Integrated, string? User)
 public sealed class TrayAuthenticator
 {
     private readonly Uri _server;
+    private readonly string? _pinnedThumbprint;
     private readonly string _credentialTarget;
     private readonly Func<CredentialPromptContext, NetworkCredential?> _prompt;
 
@@ -41,10 +42,17 @@ public sealed class TrayAuthenticator
     /// Shows the sign-in dialog and returns the entered credentials (or null if
     /// cancelled). The caller is responsible for marshalling to the UI thread.
     /// </param>
-    public TrayAuthenticator(Uri server, Func<CredentialPromptContext, NetworkCredential?> prompt)
+    /// <param name="pinnedThumbprint">
+    /// Server TLS certificate thumbprint to pin, or null for normal validation.
+    /// </param>
+    public TrayAuthenticator(
+        Uri server,
+        Func<CredentialPromptContext, NetworkCredential?> prompt,
+        string? pinnedThumbprint = null)
     {
         _server = server;
         _prompt = prompt;
+        _pinnedThumbprint = pinnedThumbprint;
         _credentialTarget = $"OpenPrintDeploy:{server.Host}";
     }
 
@@ -57,13 +65,13 @@ public sealed class TrayAuthenticator
     {
         if (DomainJoin.IsIntegratedAuthAvailable())
         {
-            return SyncApiClient.CreateDefaultCredentialsClient(_server);
+            return SyncApiClient.CreateDefaultCredentialsClient(_server, _pinnedThumbprint);
         }
 
         var credential = ReadStored() ?? PromptAndStore(reason: null);
         return credential is null
             ? null
-            : SyncApiClient.CreateExplicitCredentialsClient(_server, credential);
+            : SyncApiClient.CreateExplicitCredentialsClient(_server, credential, _pinnedThumbprint);
     }
 
     /// <summary>
@@ -75,7 +83,7 @@ public sealed class TrayAuthenticator
         var credential = PromptAndStore(reason);
         return credential is null
             ? null
-            : SyncApiClient.CreateExplicitCredentialsClient(_server, credential);
+            : SyncApiClient.CreateExplicitCredentialsClient(_server, credential, _pinnedThumbprint);
     }
 
     /// <summary>The manual "Sign in…" tray action: always prompts.</summary>

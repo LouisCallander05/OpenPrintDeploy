@@ -77,7 +77,9 @@ public sealed class AdminAccessEvaluator
         var userSids = PrincipalGroups.FromPrincipal(user);
         if (userSids.Count == 0 && username.Length > 0)
         {
-            userSids = await _directory.GetGroupSidsAsync(username, ct);
+            // Admin authorization fails closed: a directory outage yields an empty
+            // set here and therefore no admin grant, which is the safe default.
+            userSids = (await _directory.GetGroupSidsAsync(username, ct)).Sids;
         }
 
         if (userSids.Count == 0)

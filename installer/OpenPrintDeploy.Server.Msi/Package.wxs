@@ -66,7 +66,7 @@
     </ComponentGroup>
 
     <!-- The service exe: hosts the Windows service registration, failure
-         recovery, and the inbound firewall rule on TCP 5080. -->
+         recovery, and the inbound firewall rule on TCP 5443 (HTTPS). -->
     <DirectoryRef Id="INSTALLFOLDER">
       <Component Id="ServerExe" Bitness="always64">
         <File Id="ServerExeFile"
@@ -103,9 +103,9 @@
             Wait="yes" />
 
         <fw:FirewallException
-            Id="OpenPrintDeployFw5080"
-            Name="OpenPrintDeploy (5080/tcp)"
-            Port="5080"
+            Id="OpenPrintDeployFw5443"
+            Name="OpenPrintDeploy (5443/tcp)"
+            Port="5443"
             Protocol="tcp"
             Scope="any" />
       </Component>
@@ -113,7 +113,9 @@
 
     <!-- Start Menu shortcut to the admin UI. It's a .url internet shortcut
          (the target is a web address, not an exe). localhost is correct because
-         the shortcut lives on the server itself, independent of hostname/DNS.
+         the shortcut lives on the server itself, independent of hostname/DNS, and
+         it's in the self-signed cert's SAN. The browser still warns until the
+         self-signed root is trusted — expected on the server box itself.
          Start Menu folders count as a user-profile location, so the component
          keypath must be HKCU (per the documented WiX shortcut pattern / ICE38),
          even though the package itself is per-machine. -->
@@ -122,7 +124,7 @@
         <util:InternetShortcut
             Id="AdminUrlShortcut"
             Name="OpenPrintDeploy Admin"
-            Target="http://localhost:5080/"
+            Target="https://localhost:5443/"
             Type="url" />
         <RemoveFolder Id="RemoveAppProgramMenuDir" On="uninstall" />
         <RegistryValue
@@ -139,6 +141,25 @@
          `msiexec /i ... /quiet` still works for Intune/scripted installs. -->
     <ui:WixUI Id="WixUI_Minimal" />
     <WixVariable Id="WixUILicenseRtf" Value="License.rtf" />
+
+    <!-- Open the admin UI right after an interactive install so the operator
+         lands on the first-run setup page and names an admin group before
+         anyone else can. A checkbox on the finish dialog (ticked by default)
+         launches the URL as the installing user. Silent/Intune installs show no
+         finish dialog, so nothing launches there (correct for headless ESP). -->
+    <Property Id="WixShellExecTarget" Value="https://localhost:5443/" />
+    <CustomAction Id="LaunchAdminUI"
+        DllEntry="WixShellExec"
+        BinaryRef="Wix4UtilCA_X64"
+        Impersonate="yes"
+        Execute="immediate"
+        Return="ignore" />
+
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT"
+        Value="Open the admin UI to finish setup (set an admin group)" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
+    <ui:Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="LaunchAdminUI"
+        Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 and NOT Installed" />
 
   </Package>
 </Wix>

@@ -6,9 +6,15 @@
   install command, uninstall command, and detection rule (the MSI product code).
 
   The server URL is configured one of two ways, both surviving into Intune:
-    * msiexec property:  msiexec /i "OpenPrintDeploy.Client.msi" SERVER="http://host:5080"
+    * msiexec property:  msiexec /i "OpenPrintDeploy.Client.msi" SERVER="https://host:5443"
     * the MSI filename:  name it "OpenPrintDeploy - host.msi" and the tray derives
-      http://host:5080 from it (TraySettings reads the recorded OriginalDatabase).
+      https://host:5443 from it (TraySettings reads the recorded OriginalDatabase).
+
+  The server is HTTPS-only by default with a self-signed certificate. For clients
+  to trust it, either push the server's public cert to Trusted Root (GPO/Intune),
+  or pass the server's certificate thumbprint (shown on the admin Settings page):
+    msiexec /i "OpenPrintDeploy.Client.msi" SERVER="https://host:5443" CERTTHUMBPRINT="AB12…"
+  An operator/CA-issued server cert clients already trust needs neither.
 
   After install it launches the tray in the signed-in user's session (via a
   post-install action that runs the tray with a launch-active-session flag as
@@ -42,10 +48,16 @@
     <Property Id="ARPPRODUCTICON" Value="OpdClientIcon" />
     <Property Id="ARPHELPLINK" Value="https://github.com/OpenPrintDeploy/OpenPrintDeploy" />
 
-    <!-- Optional server URL. msiexec /i ... SERVER="http://host:5080". When blank,
+    <!-- Optional server URL. msiexec /i ... SERVER="https://host:5443". When blank,
          the tray derives the server from this MSI's filename. Public + Secure so
          it passes through to the deferred (system-context) install. -->
     <Property Id="SERVER" Secure="yes" />
+
+    <!-- Optional server TLS certificate thumbprint to pin (the admin Settings page
+         shows it for the self-signed cert). When set, the tray trusts exactly that
+         cert without it being in the machine trust store. Leave blank for an
+         operator/CA cert, or when the public cert is pushed to Trusted Root. -->
+    <Property Id="CERTTHUMBPRINT" Secure="yes" />
 
     <Feature Id="Main" Title="Open Print Deploy Client" Level="1">
       <ComponentGroupRef Id="TrayFiles" />
@@ -88,13 +100,16 @@
         <File Id="TrayExe" Source="$(var.HarvestDir)\OpenPrintDeploy.Client.Tray.exe" KeyPath="yes" />
       </Component>
 
-      <!-- Config the tray reads at startup: the explicit SERVER (if any), this
-           MSI's own path (for the filename-derived server), and a version marker. -->
+      <!-- Config the tray reads at startup: the explicit SERVER (if any), the
+           certificate thumbprint to pin (if any), this MSI's own path (for the
+           filename-derived server), and a version marker. -->
       <Component Id="ClientConfig" Bitness="always64">
         <RegistryValue Root="HKLM" Key="SOFTWARE\OpenPrintDeploy\Client"
                        Name="Version" Type="string" Value="$(var.ProductVersion)" KeyPath="yes" />
         <RegistryValue Root="HKLM" Key="SOFTWARE\OpenPrintDeploy\Client"
                        Name="ServerBaseAddress" Type="string" Value="[SERVER]" />
+        <RegistryValue Root="HKLM" Key="SOFTWARE\OpenPrintDeploy\Client"
+                       Name="ServerCertificateThumbprint" Type="string" Value="[CERTTHUMBPRINT]" />
         <RegistryValue Root="HKLM" Key="SOFTWARE\OpenPrintDeploy\Client"
                        Name="InstallerSource" Type="string" Value="[OriginalDatabase]" />
       </Component>

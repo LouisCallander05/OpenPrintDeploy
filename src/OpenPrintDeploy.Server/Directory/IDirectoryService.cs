@@ -10,10 +10,16 @@ public interface IDirectoryService
 {
     /// <summary>
     /// The transitive set of group SIDs for <paramref name="username"/>
-    /// (a bare sAMAccountName). Returns an empty set if the user can't be
-    /// resolved — callers treat that as "no matching zones", never an error.
+    /// (a bare sAMAccountName), together with whether the directory was actually
+    /// reachable. A reachable directory that simply has no groups for the user
+    /// returns <see cref="GroupResolution.Available"/> = true with an empty set;
+    /// a directory that could not be consulted at all (DC outage, bind failure)
+    /// returns <see cref="GroupResolution.Unavailable"/>. Callers that must fail
+    /// closed (admin authorization) can ignore the flag and read
+    /// <see cref="GroupResolution.Sids"/>; the sync path uses the flag so a
+    /// directory outage never tears down a user's printers.
     /// </summary>
-    Task<IReadOnlySet<string>> GetGroupSidsAsync(string username, CancellationToken ct = default);
+    Task<GroupResolution> GetGroupSidsAsync(string username, CancellationToken ct = default);
 
     /// <summary>
     /// Validates a domain username + password by attempting an LDAP bind as that
@@ -60,6 +66,23 @@ public interface IDirectoryService
 /// <summary>A directory group as the admin UI needs it: its stable SID (what a
 /// zone rule stores and matches on) plus a human-readable name for display.</summary>
 public sealed record DirectoryGroup(string Sid, string Name);
+
+/// <summary>
+/// The outcome of resolving a user's group SIDs: the transitive SID set plus
+/// whether the directory could actually be consulted. The distinction matters
+/// only for the sync path — an empty set with <see cref="Available"/> = false
+/// means "directory unavailable, change nothing", whereas an empty set with
+/// <see cref="Available"/> = true means "the user genuinely has no groups".
+/// </summary>
+public sealed record GroupResolution(IReadOnlySet<string> Sids, bool Available)
+{
+    /// <summary>The directory was reachable; <paramref name="sids"/> is authoritative (may be empty).</summary>
+    public static GroupResolution Resolved(IReadOnlySet<string> sids) => new(sids, Available: true);
+
+    /// <summary>The directory could not be consulted — callers should make no destructive changes.</summary>
+    public static GroupResolution Unavailable { get; } =
+        new(new HashSet<string>(StringComparer.Ordinal), Available: false);
+}
 
 /// <summary>
 /// What the admin UI shows on "Test directory connection": which provider, the

@@ -19,6 +19,12 @@ public static class HttpsProvisioner
     {
         try
         {
+            // Clamp to 1..100 years. The floor stops a zero/negative config value
+            // minting an already-expired cert; the ceiling keeps notAfter well
+            // short of year 9999, past which DateTimeOffset.AddYears overflows and
+            // would drop the server to HTTP-only.
+            var validityYears = Math.Clamp(opts.SelfSignedValidityYears, 1, 100);
+
             X509Certificate2 cert;
             if (!string.IsNullOrWhiteSpace(opts.PfxPath))
             {
@@ -29,12 +35,12 @@ public static class HttpsProvisioner
             }
             else if (OperatingSystem.IsWindows())
             {
-                cert = EnsureInMachineStore(host, logger);
+                cert = EnsureInMachineStore(host, validityYears, logger);
             }
             else
             {
                 logger.LogWarning("HTTPS: non-Windows host — using an ephemeral self-signed certificate (not persisted).");
-                cert = CreateSelfSigned(host);
+                cert = CreateSelfSigned(host, validityYears);
             }
 
             if (!cert.HasPrivateKey)
@@ -53,7 +59,7 @@ public static class HttpsProvisioner
     }
 
     [SupportedOSPlatform("windows")]
-    private static X509Certificate2 EnsureInMachineStore(string host, ILogger logger)
+    private static X509Certificate2 EnsureInMachineStore(string host, int validityYears, ILogger logger)
     {
         using var store = new X509Store(StoreName.My, StoreLocation.LocalMachine);
         store.Open(OpenFlags.ReadWrite);
@@ -73,7 +79,7 @@ public static class HttpsProvisioner
             }
         }
 
-        using var generated = CreateSelfSigned(host);
+        using var generated = CreateSelfSigned(host, validityYears);
         // Re-import via PFX so the private key is persisted in the machine key
         // store (the key from CreateSelfSigned is otherwise ephemeral).
         var persistable = new X509Certificate2(
@@ -94,7 +100,7 @@ public static class HttpsProvisioner
         return persistable;
     }
 
-    private static X509Certificate2 CreateSelfSigned(string host)
+    private static X509Certificate2 CreateSelfSigned(string host, int validityYears)
     {
         using var rsa = RSA.Create(2048);
         var request = new CertificateRequest(
@@ -117,7 +123,7 @@ public static class HttpsProvisioner
         request.CertificateExtensions.Add(san.Build());
 
         using var ephemeral = request.CreateSelfSigned(
-            DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddYears(5));
+            DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddYears(validityYears));
 
         // Re-import so the returned cert owns its key independently of `rsa`.
         return new X509Certificate2(

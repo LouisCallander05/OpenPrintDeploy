@@ -67,12 +67,13 @@ public sealed class LdapDirectoryService : IDirectoryService
 
     private readonly record struct CacheEntry<T>(T Value, DateTime ExpiresUtc);
 
-    public async Task<IReadOnlySet<string>> GetGroupSidsAsync(string username, CancellationToken ct = default)
+    public async Task<GroupResolution> GetGroupSidsAsync(string username, CancellationToken ct = default)
     {
         var sam = DirectoryUsername.Normalize(username);
         if (string.IsNullOrEmpty(sam))
         {
-            return Empty();
+            // No account to resolve — an authoritative "no groups", not an outage.
+            return GroupResolution.Resolved(Empty());
         }
 
         var domainHint = DirectoryUsername.ExtractDomain(username);
@@ -81,37 +82,62 @@ public sealed class LdapDirectoryService : IDirectoryService
         {
             return await Task.Run(() =>
             {
-                // If the caller gave an explicit domain prefix (e.g. edu002\ST02438),
-                // route directly to that DC so cross-domain lookups work without
-                // falling through the home-domain search first.
-                if (domainHint is not null)
+                // Track whether ANY directory endpoint actually answered. If every
+                // attempt failed to connect/bind, we cannot tell "no groups" from
+                // "directory down", so we must report unavailable and let the
+                // client keep its current printers.
+                var reachable = false;
+
+                // 1. Explicit domain prefix (e.g. edu002\ST02438): route straight
+                //    to that DC so cross-domain lookups don't fall through the
+                //    home-domain search first.
+                if (domainHint is not null && FindEndpointForDomain(domainHint) is { } target)
                 {
-                    var target = FindEndpointForDomain(domainHint);
-                    if (target is not null)
+                    var hit = ResolveGroupsOnEndpoint(sam, target);
+                    reachable |= hit.Reachable;
+                    if (hit.Sids.Count > 0)
                     {
-                        var sids = ResolveGroupsOnEndpoint(sam, target);
-                        if (sids.Count > 0)
-                        {
-                            return sids;
-                        }
+                        return GroupResolution.Resolved(hit.Sids);
                     }
                 }
 
-                var result = ResolveGroups(sam);
-                if (result.Count == 0)
+                // 2. This server's own domain.
+                var home = ResolveGroupsOnEndpoint(sam, _endpoint.Value);
+                reachable |= home.Reachable;
+                if (home.Sids.Count > 0)
                 {
-                    // Not found in this server's domain — the user may live in
-                    // another domain of the forest (e.g. edu002 vs edu001).
-                    result = ResolveGroupsForestWide(sam);
+                    return GroupResolution.Resolved(home.Sids);
                 }
 
-                return result;
+                // 3. Forest-wide — the user may live in another domain (edu002 vs
+                //    edu001). Each domain is best-effort.
+                foreach (var endpoint in _forestEndpoints.Value)
+                {
+                    var hit = ResolveGroupsOnEndpoint(sam, endpoint);
+                    reachable |= hit.Reachable;
+                    if (hit.Sids.Count > 0)
+                    {
+                        return GroupResolution.Resolved(hit.Sids);
+                    }
+                }
+
+                // Nothing found anywhere. If we reached at least one DC this is an
+                // authoritative "no groups"; if every DC was unreachable it's an
+                // outage.
+                if (reachable)
+                {
+                    return GroupResolution.Resolved(Empty());
+                }
+
+                _logger.LogWarning(
+                    "LDAP group resolution for {User}: no directory endpoint was reachable; reporting unavailable.", sam);
+                return GroupResolution.Unavailable;
             }, ct);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "LDAP group resolution failed for {User}; treating as no groups.", sam);
-            return Empty();
+            _logger.LogError(ex, "LDAP group resolution failed for {User}; treating as directory unavailable.", sam);
+            return GroupResolution.Unavailable;
         }
     }
 
@@ -473,74 +499,17 @@ public sealed class LdapDirectoryService : IDirectoryService
         return response.Entries.Count > 0 ? GroupName(response.Entries[0]) : null;
     }
 
-    private IReadOnlySet<string> ResolveGroups(string sam)
-    {
-        var endpoint = _endpoint.Value;
-        using var connection = CreateBoundConnection(endpoint);
-
-        var userDn = FindSingleDn(connection, endpoint.SearchBase,
-            $"(&(objectClass=user)(sAMAccountName={EscapeFilter(sam)}))");
-        if (userDn is null)
-        {
-            _logger.LogWarning("LDAP: user {User} not found under {Base}.", sam, endpoint.SearchBase);
-            return Empty();
-        }
-
-        // tokenGroups is a constructed attribute: it's only computed on a
-        // Base-scope read of the user's own DN, and already contains the
-        // transitive (nested + primary) group SIDs.
-        var request = new SearchRequest(userDn, "(objectClass=*)", SearchScope.Base, "tokenGroups");
-        var response = (SearchResponse)connection.SendRequest(request);
-
-        var sids = new HashSet<string>(StringComparer.Ordinal);
-        if (response.Entries.Count == 0)
-        {
-            return sids;
-        }
-
-        var attribute = response.Entries[0].Attributes["tokenGroups"];
-        if (attribute is null)
-        {
-            return sids;
-        }
-
-        foreach (var value in attribute.GetValues(typeof(byte[])))
-        {
-            if (value is byte[] raw)
-            {
-                sids.Add(SidConverter.ToSidString(raw));
-            }
-        }
-
-        return sids;
-    }
-
-    /// <summary>
-    /// The user's transitive group SIDs when they live in another domain of the
-    /// forest: search each domain for the account, and read tokenGroups from
-    /// whichever domain holds it. Each domain is best-effort — a failure there
-    /// just moves on. Empty if the user isn't found anywhere reachable.
-    /// </summary>
-    private IReadOnlySet<string> ResolveGroupsForestWide(string sam)
-    {
-        foreach (var endpoint in _forestEndpoints.Value)
-        {
-            var sids = ResolveGroupsOnEndpoint(sam, endpoint);
-            if (sids.Count > 0)
-            {
-                return sids;
-            }
-        }
-
-        return Empty();
-    }
+    /// <summary>The SIDs read from one endpoint, plus whether that endpoint actually answered.</summary>
+    private readonly record struct EndpointGroups(IReadOnlySet<string> Sids, bool Reachable);
 
     /// <summary>
     /// Reads tokenGroups for <paramref name="sam"/> from a specific DC endpoint.
-    /// Returns an empty set (never throws) if the user isn't found or the DC is
-    /// unreachable, so callers can safely iterate multiple endpoints.
+    /// Never throws, so callers can safely iterate multiple endpoints.
+    /// <see cref="EndpointGroups.Reachable"/> distinguishes "the DC answered but
+    /// the user/groups aren't here" (true, empty set) from "the DC could not be
+    /// reached at all" (false) — the latter must not be read as "no groups".
     /// </summary>
-    private IReadOnlySet<string> ResolveGroupsOnEndpoint(string sam, Endpoint endpoint)
+    private EndpointGroups ResolveGroupsOnEndpoint(string sam, Endpoint endpoint)
     {
         try
         {
@@ -549,9 +518,13 @@ public sealed class LdapDirectoryService : IDirectoryService
                 $"(&(objectClass=user)(sAMAccountName={EscapeFilter(sam)}))");
             if (userDn is null)
             {
-                return Empty();
+                // The DC answered — the user simply isn't in this domain.
+                return new EndpointGroups(Empty(), Reachable: true);
             }
 
+            // tokenGroups is a constructed attribute: it's only computed on a
+            // Base-scope read of the user's own DN, and already contains the
+            // transitive (nested + primary) group SIDs.
             var request = new SearchRequest(userDn, "(objectClass=*)", SearchScope.Base, "tokenGroups");
             var response = (SearchResponse)connection.SendRequest(request);
 
@@ -568,12 +541,12 @@ public sealed class LdapDirectoryService : IDirectoryService
                 }
             }
 
-            return sids;
+            return new EndpointGroups(sids, Reachable: true);
         }
         catch (Exception ex)
         {
             _logger.LogDebug(ex, "User lookup failed in {Domain}.", endpoint.Server);
-            return Empty();
+            return new EndpointGroups(Empty(), Reachable: false);
         }
     }
 
