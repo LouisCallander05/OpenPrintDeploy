@@ -1,5 +1,6 @@
 using System.IO;
 using System.Text.Json;
+using OpenPrintDeploy.Shared;
 
 namespace OpenPrintDeploy.Client.Tray;
 
@@ -9,22 +10,23 @@ namespace OpenPrintDeploy.Client.Tray;
 /// non-empty <c>Server:BaseAddress</c> in <c>appsettings.json</c> (written by the
 /// EXE installer); then the registry (written by the MSI installer) — an explicit
 /// <c>ServerBaseAddress</c>, or derived from the MSI's own filename
-/// (<c>OpenPrintDeploy - host.msi</c> → <c>https://host:5443</c>). Any explicit
-/// URL is honoured as-is (so an <c>http://</c> server still works); only the
-/// filename-derived fallback defaults to HTTPS.
+/// (<c>OpenPrintDeploy [server=host] [cert=…].msi</c> → <c>https://host:5443</c>).
+/// Any explicit URL is honoured as-is (so an <c>http://</c> server still works);
+/// only the filename-derived fallback defaults to HTTPS.
 ///
-/// When the server uses a self-signed certificate, set the server's certificate
-/// thumbprint (<c>OPD_SERVER_CERT_THUMBPRINT</c>, <c>Server:CertificateThumbprint</c>,
-/// or the registry <c>ServerCertificateThumbprint</c>) so the tray trusts exactly
-/// that certificate without it being in the machine trust store.
+/// When the server uses a self-signed certificate, the thumbprint to pin is
+/// resolved the same way: <c>OPD_SERVER_CERT_THUMBPRINT</c>,
+/// <c>Server:CertificateThumbprint</c>, the registry <c>ServerCertificateThumbprint</c>
+/// (the <c>CERTTHUMBPRINT=</c> property), or the <c>[cert=…]</c> token in the
+/// installer filename — so a one-click download pins automatically. The tray then
+/// trusts exactly that certificate without it being in the machine trust store.
 /// </summary>
 public sealed class TraySettings
 {
     private const string RegistryKey = @"SOFTWARE\OpenPrintDeploy\Client";
 
-    // Matches the EXE installer's filename convention (Program.cs). The derived
-    // fallback defaults to HTTPS so a freshly installed client prefers TLS.
-    private const string FileNameServerDelimiter = " - ";
+    // The filename-derived fallback defaults to HTTPS so a freshly installed
+    // client prefers TLS. Host + thumbprint are parsed by InstallerNaming.
     private const string FileNameServerScheme = "https";
     private const int FileNameServerPort = 5443;
 
@@ -72,16 +74,27 @@ public sealed class TraySettings
         }
 
         // MSI installs configure the server via the registry (the EXE installer
-        // writes appsettings.json instead). Honoured only when nothing above set
-        // a URL, so the two install paths don't fight.
+        // writes appsettings.json instead). Explicit values win; otherwise both
+        // the server and the pinned thumbprint come from the installer's own
+        // filename, so a one-click download needs no msiexec properties.
+        var identity = InstallerNaming.Parse(ReadRegistryValue("InstallerSource"));
+
         if (string.IsNullOrWhiteSpace(url))
         {
-            url = ReadServerFromRegistry();
+            url = ReadRegistryValue("ServerBaseAddress"); // explicit SERVER=
+            if (string.IsNullOrWhiteSpace(url) && !string.IsNullOrWhiteSpace(identity.Host))
+            {
+                url = $"{FileNameServerScheme}://{identity.Host}:{FileNameServerPort}";
+            }
         }
 
         if (string.IsNullOrWhiteSpace(thumbprint))
         {
-            thumbprint = ReadRegistryValue("ServerCertificateThumbprint");
+            thumbprint = ReadRegistryValue("ServerCertificateThumbprint"); // explicit CERTTHUMBPRINT=
+            if (string.IsNullOrWhiteSpace(thumbprint))
+            {
+                thumbprint = identity.Thumbprint;
+            }
         }
 
         if (string.IsNullOrWhiteSpace(url))
@@ -99,36 +112,6 @@ public sealed class TraySettings
         };
     }
 
-    /// <summary>
-    /// The server URL from the MSI-written registry: an explicit
-    /// <c>ServerBaseAddress</c> (the <c>SERVER=</c> property), or — failing that —
-    /// derived from the installer's own filename via <c>InstallerSource</c>.
-    /// </summary>
-    private static string? ReadServerFromRegistry()
-    {
-        try
-        {
-            using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(RegistryKey);
-            if (key is null)
-            {
-                return null;
-            }
-
-            if (key.GetValue("ServerBaseAddress") is string explicitUrl
-                && !string.IsNullOrWhiteSpace(explicitUrl))
-            {
-                return explicitUrl.Trim();
-            }
-
-            return DeriveServerFromInstallerName(key.GetValue("InstallerSource") as string);
-        }
-        catch
-        {
-            // Registry unreadable / key absent — fall through to the not-configured error.
-            return null;
-        }
-    }
-
     /// <summary>Reads a single string value from the client registry key, or null if absent/unreadable.</summary>
     private static string? ReadRegistryValue(string name)
     {
@@ -141,44 +124,5 @@ public sealed class TraySettings
         {
             return null;
         }
-    }
-
-    /// <summary>
-    /// "…\OpenPrintDeploy - printsrv01.corp.local.msi" → "https://printsrv01.corp.local:5443".
-    /// Returns null when the name carries no "<c> - </c>" host segment.
-    /// </summary>
-    private static string? DeriveServerFromInstallerName(string? installerPath)
-    {
-        if (string.IsNullOrWhiteSpace(installerPath))
-        {
-            return null;
-        }
-
-        string name;
-        try
-        {
-            name = Path.GetFileNameWithoutExtension(installerPath);
-        }
-        catch (ArgumentException)
-        {
-            return null;
-        }
-
-        var idx = name.IndexOf(FileNameServerDelimiter, StringComparison.Ordinal);
-        if (idx < 0)
-        {
-            return null;
-        }
-
-        var host = name[(idx + FileNameServerDelimiter.Length)..].Trim();
-        foreach (var ext in new[] { ".msi", ".exe" })
-        {
-            if (host.EndsWith(ext, StringComparison.OrdinalIgnoreCase))
-            {
-                host = host[..^ext.Length].Trim();
-            }
-        }
-
-        return host.Length == 0 ? null : $"{FileNameServerScheme}://{host}:{FileNameServerPort}";
     }
 }

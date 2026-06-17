@@ -287,7 +287,7 @@ app.MapPost("/sync", async (
 // Hands out the tray-client MSI, pre-named "OpenPrintDeploy - <host>.msi". Wrap
 // it as-is for Intune: the MSI auto-fills install/uninstall/detection on upload,
 // and the tray reads the server from the filename. Admin-only.
-app.MapGet("/download/client-msi", (IConfiguration cfg, IWebHostEnvironment env) =>
+app.MapGet("/download/client-msi", (IConfiguration cfg, IWebHostEnvironment env, HttpsStatus https) =>
 {
     var path = ClientInstallerDownload.ResolveMsiPath(cfg, env.ContentRootPath);
     if (!File.Exists(path))
@@ -299,7 +299,10 @@ app.MapGet("/download/client-msi", (IConfiguration cfg, IWebHostEnvironment env)
             statusCode: StatusCodes.Status404NotFound);
     }
 
-    var fileName = ClientInstallerDownload.MsiDownloadFileName(cfg);
+    // Carry the self-signed thumbprint in the filename so the one-click install
+    // pins it automatically. A CA cert (not self-signed) needs no pin.
+    var pin = https is { Enabled: true, Bound: true, SelfSigned: true } ? https.Thumbprint : null;
+    var fileName = ClientInstallerDownload.MsiDownloadFileName(cfg, pin);
     return Results.File(path, "application/octet-stream", fileDownloadName: fileName);
 })
 .RequireAuthorization(AuthPolicies.Admin);

@@ -1,4 +1,5 @@
 using System.Net.NetworkInformation;
+using OpenPrintDeploy.Shared;
 
 namespace OpenPrintDeploy.Server.Download;
 
@@ -30,13 +31,18 @@ public static class ClientInstallerDownload
     }
 
     /// <summary>
-    /// Filename offered to the browser for the MSI: <c>OpenPrintDeploy - &lt;host&gt;.msi</c>.
-    /// The tray reads the host out of this filename (recorded by the MSI as
-    /// <c>OriginalDatabase</c>) the same way the exe does — so wrapping this file
-    /// as-is for Intune carries the server with it.
+    /// Filename offered to the browser for the MSI:
+    /// <c>OpenPrintDeploy [server=&lt;host&gt;] [cert=&lt;thumbprint&gt;].msi</c>.
+    /// The tray reads the host (and, for a self-signed server, the certificate
+    /// thumbprint to pin) out of this filename — recorded by the MSI as
+    /// <c>OriginalDatabase</c> — so a one-click download installs a correctly
+    /// targeted, certificate-pinned client with no msiexec properties, and
+    /// wrapping the file as-is for Intune carries both with it. The bracketed
+    /// tokens survive a browser duplicate-download "(1)" rename. Pass the
+    /// thumbprint only for a self-signed cert (a CA cert needs no pin).
     /// </summary>
-    public static string MsiDownloadFileName(IConfiguration cfg)
-        => $"OpenPrintDeploy - {ResolveHost(cfg)}.msi";
+    public static string MsiDownloadFileName(IConfiguration cfg, string? pinnedThumbprint = null)
+        => InstallerNaming.Compose(ResolveHost(cfg), pinnedThumbprint);
 
     /// <summary>
     /// The host clients should reach this server on. Explicit

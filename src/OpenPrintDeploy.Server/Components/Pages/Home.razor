@@ -7,6 +7,7 @@
 @inject ZoneService Zones
 @inject IConfiguration Config
 @inject IWebHostEnvironment Env
+@inject OpenPrintDeploy.Server.Https.HttpsStatus HttpsState
 
 <PageTitle>Open Print Deploy — Admin</PageTitle>
 
@@ -44,6 +45,23 @@
         @if (_msiAvailable)
         {
             <a class="btn btn-sm btn-primary" href="download/client-msi">Download client MSI</a>
+
+            @if (HttpsState is { Enabled: true, Bound: true, SelfSigned: true, Thumbprint: not null })
+            {
+                <div class="alert alert-info mt-3 mb-0">
+                    <p class="mb-1">
+                        The download is preconfigured for this server <strong>and its self-signed
+                        certificate</strong> — download it and run it on the client as-is; it trusts this
+                        server automatically, no extra steps.
+                    </p>
+                    <p class="mb-0 small text-muted">
+                        The server and certificate ride in the filename (<code>@_msiFileName</code>). Keep the
+                        bracketed <code>[server=…] [cert=…]</code> tokens — a duplicate-download “ (1)” suffix is
+                        fine, just don’t rename them away. Alternatively push the cert to clients’ Trusted Root
+                        (GPO/Intune) or use a domain-CA certificate (<code>Https:PfxPath</code>).
+                    </p>
+                </div>
+            }
         }
         else
         {
@@ -66,7 +84,8 @@
         _printerCount = (await Printers.GetAllAsync()).Count;
         _zoneCount = (await Zones.GetAllAsync()).Count;
 
-        _msiFileName = ClientInstallerDownload.MsiDownloadFileName(Config);
+        var pin = HttpsState is { Enabled: true, Bound: true, SelfSigned: true } ? HttpsState.Thumbprint : null;
+        _msiFileName = ClientInstallerDownload.MsiDownloadFileName(Config, pin);
         _msiAvailable = File.Exists(
             ClientInstallerDownload.ResolveMsiPath(Config, Env.ContentRootPath));
     }

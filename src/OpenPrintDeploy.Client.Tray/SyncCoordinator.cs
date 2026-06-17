@@ -71,13 +71,36 @@ public sealed class SyncCoordinator : IDisposable
             }
             catch (Exception retryEx) when (retryEx is not OperationCanceledException)
             {
-                return SyncOutcome.Failure(retryEx.Message);
+                return SyncOutcome.Failure(DescribeError(retryEx));
             }
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
-            return SyncOutcome.Failure(ex.Message);
+            return SyncOutcome.Failure(DescribeError(ex));
         }
+    }
+
+    /// <summary>
+    /// Turns an exception into a user-facing message. A TLS trust failure (the
+    /// common first-run snag with a self-signed server cert that the client
+    /// hasn't been told to trust) gets actionable guidance instead of the
+    /// framework's opaque "The SSL connection could not be established".
+    /// </summary>
+    private static string DescribeError(Exception ex)
+    {
+        for (var e = ex; e is not null; e = e.InnerException)
+        {
+            if (e is System.Security.Authentication.AuthenticationException)
+            {
+                return "Couldn’t establish a trusted secure (TLS) connection — the server’s certificate "
+                     + "isn’t trusted on this PC. If the server uses its self-signed certificate, pin its "
+                     + "thumbprint (CERTTHUMBPRINT when installing the client, or set the registry value "
+                     + "HKLM\\SOFTWARE\\OpenPrintDeploy\\Client\\ServerCertificateThumbprint and restart), "
+                     + "or add the certificate to this PC’s Trusted Root store.";
+            }
+        }
+
+        return ex.Message;
     }
 
     /// <summary>Manual "Sign in…" tray action: prompt and switch to those credentials.</summary>
