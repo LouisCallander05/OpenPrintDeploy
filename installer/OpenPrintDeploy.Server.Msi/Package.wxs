@@ -158,8 +158,10 @@
     <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT"
         Value="Open the admin UI to finish setup (set an admin group)" />
     <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
-    <ui:Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="LaunchAdminUI"
-        Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 and NOT Installed" />
+    <UI>
+      <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="LaunchAdminUI"
+          Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 and NOT Installed" />
+    </UI>
 
   </Package>
 </Wix>
