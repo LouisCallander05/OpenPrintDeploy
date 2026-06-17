@@ -145,6 +145,6 @@ Write-Host "Next:" -ForegroundColor Green
 Write-Host "  1. Copy OpenPrintDeploy.Server.msi to the print server."
 Write-Host "  2. Double-click it (UAC elevates), or: msiexec /i OpenPrintDeploy.Server.msi /quiet"
 Write-Host "  3. Open the admin UI from the Start Menu (OpenPrintDeploy > OpenPrintDeploy Admin),"
-Write-Host "     or browse to http://<this-host>:5080/admin/directory."
+Write-Host "     or browse to https://localhost:5443/."
 Write-Host "  4. Admins can then download the tray client from the dashboard"
 Write-Host "     (or GET /download/client) pre-named for this server."

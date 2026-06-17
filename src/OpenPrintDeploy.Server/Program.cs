@@ -1,4 +1,7 @@
+using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using OpenPrintDeploy.Server.Admin;
 using OpenPrintDeploy.Server.Auth;
@@ -193,6 +196,26 @@ builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
 builder.Services.AddCascadingAuthenticationState();
 
+// Rate-limit /sync: 12 requests per minute per authenticated user. Generous
+// enough for the default 5-minute interval plus manual "Sync now" clicks, but
+// caps a misbehaving client or a logon-storm retry loop. Keyed on the
+// authenticated username so NAT'd clients behind the same IP aren't penalised
+// as a group. Unauthenticated requests are rejected by the auth policy before
+// the limiter fires, so they never consume permits.
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.AddPolicy("sync", context =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: context.User.Identity?.Name ?? context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 12,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+            }));
+});
+
 var app = builder.Build();
 
 using (var scope = app.Services.CreateScope())
@@ -228,6 +251,7 @@ if (httpsStatus.Enforced)
 app.UseStaticFiles();
 app.UseAuthentication();
 app.UseAuthorization();
+app.UseRateLimiter();
 app.UseAntiforgery();
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
@@ -255,6 +279,8 @@ app.MapPost("/sync", async (
     return Results.Ok(response);
 })
 .RequireAuthorization(syncPolicy)
+.RequireRateLimiting("sync")
+.WithMetadata(new RequestSizeLimitAttribute(1024)) // SyncRequestDto is ~50 bytes; 1 KB is plenty
 .DisableAntiforgery();
 
 

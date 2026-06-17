@@ -12,7 +12,7 @@ The operator deploys a single file:
 Running it (UAC) extracts the tray to Program Files, configures the server, and
 registers logon auto-start. The server URL can be passed with --server, or
 encoded in the filename — rename the exe to "OpenPrintDeploy - <host>.exe" and
-it configures http://<host>:5080 with no arguments.
+it configures https://<host>:5443 with no arguments.
 
 For Intune, prefer the MSI (scripts/Publish-Client-Msi.ps1): Intune auto-fills
 install/uninstall/detection from the MSI, and the same "<name> - <host>"
@@ -107,6 +107,6 @@ Write-Host "  $installerExe  (${sizeMb} MB, self-extracting)"
 Write-Host ""
 Write-Host "Next:" -ForegroundColor Green
 Write-Host "  - Test on a workstation (either form works):"
-Write-Host "      OpenPrintDeploy.Client.Installer.exe install --server http://printsrv01.corp.local:5080"
+Write-Host "      OpenPrintDeploy.Client.Installer.exe install --server https://printsrv01.corp.local:5443"
 Write-Host "      # ...or rename to 'OpenPrintDeploy - printsrv01.corp.local.exe' and just run it"
 Write-Host "  - For Intune, build the MSI instead: scripts\Publish-Client-Msi.ps1"

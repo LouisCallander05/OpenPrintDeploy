@@ -6,7 +6,7 @@ namespace OpenPrintDeploy.Client.Installer;
 /// exe runs standalone too: double-click triggers UAC, install args drive a
 /// silent install for Intune.
 ///
-///   OpenPrintDeploy.Client.Installer.exe install --server http://printsrv01:5080
+///   OpenPrintDeploy.Client.Installer.exe install --server https://printsrv01:5443
 ///   OpenPrintDeploy.Client.Installer.exe uninstall
 ///   OpenPrintDeploy.Client.Installer.exe uninstall --remove-data
 ///   OpenPrintDeploy.Client.Installer.exe --help
@@ -22,8 +22,8 @@ internal static class Program
     // the server. Filenames can't carry a scheme or ':' port, so we apply a
     // fixed scheme/port to the bare host. An explicit --server still wins.
     private const string FileNameServerDelimiter = " - ";
-    private const string FileNameServerScheme    = "http";
-    private const int    FileNameServerPort       = 5080;
+    private const string FileNameServerScheme    = "https";
+    private const int    FileNameServerPort       = 5443;
 
     public static int Main(string[] args)
     {
@@ -100,7 +100,7 @@ internal static class Program
     /// <summary>
     /// Reads the server host out of the installer's own filename. A file named
     /// "OpenPrintDeploy - 0912SPS01.services.education.vic.gov.au.exe" yields
-    /// "http://0912SPS01.services.education.vic.gov.au:5080". Returns null when
+    /// "https://0912SPS01.services.education.vic.gov.au:5443". Returns null when
     /// the filename carries no "<c> - </c>" delimiter (e.g. the default
     /// "OpenPrintDeploy.Client.Installer.exe"), so a normal run is unaffected.
     /// </summary>
@@ -149,7 +149,7 @@ internal static class Program
         Console.WriteLine();
         Console.WriteLine("Usage:");
         Console.WriteLine("  OpenPrintDeploy.Client.Installer.exe install --server <url>");
-        Console.WriteLine("                                                Install the tray and configure the server URL.");
+        Console.WriteLine("                                                Install the tray and configure the server URL (e.g. https://printsrv01:5443).");
         Console.WriteLine("  OpenPrintDeploy.Client.Installer.exe install");
         Console.WriteLine("                                                Install/upgrade keeping the existing server URL.");
         Console.WriteLine("  OpenPrintDeploy.Client.Installer.exe uninstall");
@@ -168,7 +168,7 @@ internal static class Program
         Console.WriteLine("Must be run elevated (double-click triggers UAC; Intune runs as SYSTEM).");
         Console.WriteLine();
         Console.WriteLine("Example Intune install command:");
-        Console.WriteLine("  OpenPrintDeploy.Client.Installer.exe install --server http://printsrv01.corp.local:5080");
+        Console.WriteLine("  OpenPrintDeploy.Client.Installer.exe install --server https://printsrv01.corp.local:5443");
         WaitForKeyIfInteractive();
         return 0;
     }

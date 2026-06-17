@@ -13,5 +13,5 @@ public sealed class UpdateOptions
     /// against its own version. Empty disables the check (the button reports that
     /// no repo is configured).
     /// </summary>
-    public string GitHubRepo { get; set; } = "BATSO123/OpenPrintDeploy";
+    public string GitHubRepo { get; set; } = "LouisCallander05/OpenPrintDeploy";
 }

@@ -62,6 +62,7 @@
     <Feature Id="Main" Title="Open Print Deploy Client" Level="1">
       <ComponentGroupRef Id="TrayFiles" />
       <ComponentRef Id="TrayExeComponent" />
+      <ComponentRef Id="RemoveExeSettings" />
       <ComponentRef Id="ClientConfig" />
       <ComponentRef Id="AutoStartRunKey" />
       <ComponentRef Id="TrayShortcut" />
@@ -98,6 +99,16 @@
     <DirectoryRef Id="INSTALLFOLDER">
       <Component Id="TrayExeComponent" Bitness="always64">
         <File Id="TrayExe" Source="$(var.HarvestDir)\OpenPrintDeploy.Client.Tray.exe" KeyPath="yes" />
+      </Component>
+
+      <!-- Remove any appsettings.json left by a previous EXE installer. The MSI
+           configures the tray via the registry (below); a leftover appsettings.json
+           shadows the registry in TraySettings' resolution order, so an EXE-to-MSI
+           upgrade would silently keep the old (often http://) server URL. -->
+      <Component Id="RemoveExeSettings" Bitness="always64" Guid="4A1C9E3B-7D5F-48A2-B0C6-8E2F1A5D9B73">
+        <RemoveFile Id="RemoveOldAppSettings" Name="appsettings.json" On="install" Directory="INSTALLFOLDER" />
+        <RegistryValue Root="HKLM" Key="SOFTWARE\OpenPrintDeploy\Client"
+                       Name="ExeSettingsCleaned" Type="integer" Value="1" KeyPath="yes" />
       </Component>
 
       <!-- Config the tray reads at startup: the explicit SERVER (if any), the

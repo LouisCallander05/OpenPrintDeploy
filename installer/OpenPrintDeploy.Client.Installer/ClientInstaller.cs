@@ -183,7 +183,7 @@ internal static class ClientInstaller
             if (!Uri.TryCreate(serverUrl, UriKind.Absolute, out _))
             {
                 throw new InvalidOperationException(
-                    $"--server value '{serverUrl}' is not an absolute URL (e.g. http://printsrv01:5080).");
+                    $"--server value '{serverUrl}' is not an absolute URL (e.g. https://printsrv01:5443).");
             }
             server["BaseAddress"] = serverUrl;
         }
@@ -197,7 +197,7 @@ internal static class ClientInstaller
             if (string.IsNullOrWhiteSpace(existing))
             {
                 throw new InvalidOperationException(
-                    "First-time install: pass --server <url> (e.g. --server http://printsrv01.corp.local:5080), " +
+                    "First-time install: pass --server <url> (e.g. --server https://printsrv01.corp.local:5443), " +
                     "or rename the installer to \"OpenPrintDeploy - <host>.exe\" and run it.");
             }
         }

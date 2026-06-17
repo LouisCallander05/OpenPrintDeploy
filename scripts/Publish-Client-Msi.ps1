@@ -12,10 +12,10 @@ Because it's an MSI, uploading the wrapped .intunewin to Intune auto-fills the
 install command, uninstall command, and detection rule. Configure the server one
 of two ways (both survive into Intune):
 
-    msiexec /i "OpenPrintDeploy.Client.msi" SERVER="http://printsrv01:5080"
+    msiexec /i "OpenPrintDeploy.Client.msi" SERVER="https://printsrv01:5443"
 
 ...or rename the MSI to "OpenPrintDeploy - printsrv01.msi" before wrapping it,
-and the tray derives http://printsrv01:5080 from the filename.
+and the tray derives https://printsrv01:5443 from the filename.
 
 The *build* machine needs the .NET 8 SDK; the WiX SDK restores from NuGet during
 `dotnet build` (no global tool required).
@@ -88,4 +88,4 @@ Write-Host "  1. (Optional) rename to 'OpenPrintDeploy - <host>.msi' to bake in 
 Write-Host "     or pass SERVER=... in the install command instead."
 Write-Host "  2. Wrap it:  IntuneWinAppUtil.exe -c <folder> -s OpenPrintDeploy.Client.msi -o <out>"
 Write-Host "  3. New Win32 app in Intune -> upload the .intunewin. Install/uninstall/detection auto-fill."
-Write-Host "     If you didn't rename, add SERVER=`"http://<host>:5080`" to the install command."
+Write-Host "     If you didn't rename, add SERVER=`"https://<host>:5443`" to the install command."

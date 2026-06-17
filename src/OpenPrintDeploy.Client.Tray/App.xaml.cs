@@ -39,6 +39,8 @@ public partial class App : Application
             return;
         }
 
+        ClientLog.Info($"Starting {Branding.ProductName} v{GetVersion()}");
+
         TraySettings settings;
         try
         {
@@ -46,12 +48,15 @@ public partial class App : Application
         }
         catch (Exception ex)
         {
+            ClientLog.Error("Failed to load settings", ex);
             MessageBox.Show(
                 $"{Branding.ProductName} could not start: {ex.Message}",
                 Branding.ProductName, MessageBoxButton.OK, MessageBoxImage.Error);
             Shutdown(1);
             return;
         }
+
+        ClientLog.Info($"Server: {settings.ServerBaseAddress}");
 
         // The prompt must run on the UI (STA) thread; the authenticator may call
         // it from a background continuation during a sync, so marshal explicitly.
@@ -82,11 +87,13 @@ public partial class App : Application
         {
             if (_isSignedIn)
             {
+                ClientLog.Info("User signed out");
                 _coordinator?.SignOut();
                 _ = RefreshAuthMenuAsync();
             }
             else
             {
+                ClientLog.Info("User signing in…");
                 _coordinator?.SignIn();
                 _ = RefreshAuthMenuAsync();
                 await SyncAsync(manual: true);
@@ -172,6 +179,20 @@ public partial class App : Application
 
         var outcome = await _coordinator.RunOnceAsync();
 
+        if (outcome.Ok)
+        {
+            var logMsg = $"Sync OK — {outcome.PrinterCount} printer(s)";
+            if (outcome.AddedNames.Count > 0)
+                logMsg += $", {outcome.AddedNames.Count} added ({string.Join(", ", outcome.AddedNames)})";
+            if (outcome.FailedNames.Count > 0)
+                logMsg += $", {outcome.FailedNames.Count} failed ({string.Join(", ", outcome.FailedNames)})";
+            ClientLog.Info(logMsg);
+        }
+        else
+        {
+            ClientLog.Error($"Sync failed: {outcome.Error}");
+        }
+
         // Background syncs are silent. Everything below is for "Sync now" only.
         if (!manual)
         {
@@ -212,6 +233,7 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        ClientLog.Info("Shutting down");
         _timer?.Stop();
         if (_notifyIcon is not null)
         {
