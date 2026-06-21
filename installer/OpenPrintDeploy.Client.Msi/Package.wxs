@@ -6,17 +6,17 @@
   install command, uninstall command, and detection rule (the MSI product code).
 
   The server URL (and, for a self-signed server, the cert thumbprint to pin) is
-  configured one of two ways, both surviving into Intune:
-    * msiexec properties:  msiexec /i "OpenPrintDeploy.Client.msi"
-                             SERVER="https://host:5443" CERTTHUMBPRINT="AB12…"
-    * the MSI filename:    the admin UI hands out
-                             "OpenPrintDeploy [server=host] [cert=AB12…].msi" and
-                             the tray derives https://host:5443 AND the pinned
-                             thumbprint from it (TraySettings parses the recorded
-                             OriginalDatabase via Shared InstallerNaming). The
-                             bracketed tokens survive a browser "(1)" rename. So a
-                             one-click download installs a correctly targeted,
-                             cert-pinned client with no properties at all.
+  configured one of two ways:
+    * msiexec properties (Intune / scripted — the reliable fleet path):
+        msiexec /i "OpenPrintDeploy.Client.msi" SERVER="https://host:5443" CERTTHUMBPRINT="AB12…"
+      Use any plain filename; do NOT rely on the auto-pin name for Intune, as
+      IntuneWinAppUtil rejects special characters in filenames.
+    * the MSI filename (manual double-click): the admin UI hands out
+        "OpenPrintDeploy - host - AB12….msi"
+      and the tray derives https://host:5443 AND the pinned thumbprint from it
+      (TraySettings parses the recorded OriginalDatabase via Shared
+      InstallerNaming). " - " separators (no glob chars) and a "(1)" duplicate-
+      download suffix are both handled.
 
   An operator/CA-issued server cert clients already trust needs no thumbprint;
   pushing the self-signed public cert to Trusted Root (GPO/Intune) is the other

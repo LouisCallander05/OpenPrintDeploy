@@ -10,15 +10,15 @@ namespace OpenPrintDeploy.Client.Tray;
 /// non-empty <c>Server:BaseAddress</c> in <c>appsettings.json</c> (written by the
 /// EXE installer); then the registry (written by the MSI installer) — an explicit
 /// <c>ServerBaseAddress</c>, or derived from the MSI's own filename
-/// (<c>OpenPrintDeploy [server=host] [cert=…].msi</c> → <c>https://host:5443</c>).
+/// (<c>OpenPrintDeploy - host - thumbprint.msi</c> → <c>https://host:5443</c>).
 /// Any explicit URL is honoured as-is (so an <c>http://</c> server still works);
 /// only the filename-derived fallback defaults to HTTPS.
 ///
 /// When the server uses a self-signed certificate, the thumbprint to pin is
 /// resolved the same way: <c>OPD_SERVER_CERT_THUMBPRINT</c>,
 /// <c>Server:CertificateThumbprint</c>, the registry <c>ServerCertificateThumbprint</c>
-/// (the <c>CERTTHUMBPRINT=</c> property), or the <c>[cert=…]</c> token in the
-/// installer filename — so a one-click download pins automatically. The tray then
+/// (the <c>CERTTHUMBPRINT=</c> property), or the trailing thumbprint segment in
+/// the installer filename — so a one-click download pins automatically. The tray then
 /// trusts exactly that certificate without it being in the machine trust store.
 /// </summary>
 public sealed class TraySettings

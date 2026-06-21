@@ -50,15 +50,21 @@
             {
                 <div class="alert alert-info mt-3 mb-0">
                     <p class="mb-1">
-                        The download is preconfigured for this server <strong>and its self-signed
-                        certificate</strong> — download it and run it on the client as-is; it trusts this
-                        server automatically, no extra steps.
+                        <strong>Manual install:</strong> download and run it as-is — the server and its
+                        self-signed certificate ride in the filename (<code>@_msiFileName</code>), so it trusts
+                        this server automatically.
                     </p>
+                    <hr class="my-2" />
+                    <p class="mb-1">
+                        <strong>Intune / scripted:</strong> rename the file to a simple name
+                        (e.g. <code>OpenPrintDeploy.Client.msi</code>) before wrapping with IntuneWinAppUtil,
+                        and set the install command:
+                    </p>
+                    <pre class="mb-1"><code>msiexec /i "OpenPrintDeploy.Client.msi" SERVER="https://@(HttpsState.Host):@(HttpsState.Port)" CERTTHUMBPRINT="@HttpsState.Thumbprint" /quiet</code></pre>
                     <p class="mb-0 small text-muted">
-                        The server and certificate ride in the filename (<code>@_msiFileName</code>). Keep the
-                        bracketed <code>[server=…] [cert=…]</code> tokens — a duplicate-download “ (1)” suffix is
-                        fine, just don’t rename them away. Alternatively push the cert to clients’ Trusted Root
-                        (GPO/Intune) or use a domain-CA certificate (<code>Https:PfxPath</code>).
+                        The auto-pin filename can trip packaging tools, so rename + properties is the reliable
+                        path for fleet deployment. A domain-CA certificate (<code>Https:PfxPath</code>) or
+                        pushing the cert to clients’ Trusted Root removes the need for <code>CERTTHUMBPRINT</code>.
                     </p>
                 </div>
             }
