@@ -8,6 +8,9 @@ namespace OpenPrintDeploy.Server.Tests.ClientCore;
 
 public sealed class SyncOrchestratorTests
 {
+    private static ManagedPrinter Created(string unc) => new(unc, PrinterOrigin.Created);
+    private static ManagedPrinter Adopted(string unc) => new(unc, PrinterOrigin.Adopted);
+
     [Fact]
     public async Task SyncOnce_AppliesDiff_AndReturnsNewManagedSet()
     {
@@ -17,13 +20,14 @@ public sealed class SyncOrchestratorTests
         var applier = new RecordingApplier(installed: [@"\\srv\b"]);
         var orchestrator = new SyncOrchestrator(api, applier);
 
-        var managedAfter = await orchestrator.SyncOnceAsync("PC1", [@"\\srv\b", @"\\srv\c"]);
+        var result = await orchestrator.SyncOnceAsync("PC1", [Created(@"\\srv\b"), Created(@"\\srv\c")]);
 
         Assert.NotNull(applier.Applied);
         Assert.Equal([@"\\srv\a"], applier.Applied!.ToAdd.Select(p => p.UncPath));
         Assert.Equal([@"\\srv\c"], applier.Applied.ToRemove);
-        Assert.Equal([@"\\srv\a", @"\\srv\b"], managedAfter.ManagedUncs.OrderBy(u => u));
-        Assert.Equal(["HR"], managedAfter.AddedNames);
+        Assert.Equal([@"\\srv\a", @"\\srv\b"], result.ManagedPrinters.Select(m => m.Unc).OrderBy(u => u));
+        Assert.All(result.ManagedPrinters, m => Assert.Equal(PrinterOrigin.Created, m.Origin));
+        Assert.Equal(["HR"], result.AddedNames);
     }
 
     [Fact]
@@ -35,9 +39,47 @@ public sealed class SyncOrchestratorTests
         var applier = new RecordingApplier(installed: [@"\\srv\b"]);
         var orchestrator = new SyncOrchestrator(api, applier);
 
-        await orchestrator.SyncOnceAsync("PC1", [@"\\srv\a", @"\\srv\b"]);
+        await orchestrator.SyncOnceAsync("PC1", [Created(@"\\srv\a"), Created(@"\\srv\b")]);
 
         Assert.Equal([@"\\srv\a"], applier.Applied!.ToAdd.Select(p => p.UncPath));
+    }
+
+    [Fact]
+    public async Task SyncOnce_AdoptsPreexistingDesiredPrinter_WithoutReadding()
+    {
+        // A printer matching a desired UNC is already on the machine (e.g. left by
+        // PaperCut Print Deploy) but OPD doesn't track it. OPD must claim it as
+        // managed-with-origin-Adopted, and must NOT re-add it (no flicker).
+        var server = new SyncResponseDto([new PrinterDto("Library", @"\\srv\lib")]);
+        var api = new SyncApiClient(StubHttpClient(server));
+        var applier = new RecordingApplier(installed: [@"\\srv\lib"]);
+        var orchestrator = new SyncOrchestrator(api, applier);
+
+        var result = await orchestrator.SyncOnceAsync("PC1", []);
+
+        Assert.Empty(applier.Applied!.ToAdd);
+        Assert.Empty(applier.Applied.ToRemove);
+        var adopted = Assert.Single(result.ManagedPrinters);
+        Assert.Equal(@"\\srv\lib", adopted.Unc);
+        Assert.Equal(PrinterOrigin.Adopted, adopted.Origin);
+        Assert.Empty(result.AddedNames);
+    }
+
+    [Fact]
+    public async Task SyncOnce_PreservesProvenance_OfAlreadyManagedPrinter()
+    {
+        // An adopted printer that's still desired and still installed stays
+        // adopted — it is not re-tagged as created on a later sync.
+        var server = new SyncResponseDto([new PrinterDto("Library", @"\\srv\lib")]);
+        var api = new SyncApiClient(StubHttpClient(server));
+        var applier = new RecordingApplier(installed: [@"\\srv\lib"]);
+        var orchestrator = new SyncOrchestrator(api, applier);
+
+        var result = await orchestrator.SyncOnceAsync("PC1", [Adopted(@"\\srv\lib")]);
+
+        var kept = Assert.Single(result.ManagedPrinters);
+        Assert.Equal(PrinterOrigin.Adopted, kept.Origin);
+        Assert.Empty(applier.Applied!.ToAdd);
     }
 
     [Fact]
@@ -54,7 +96,9 @@ public sealed class SyncOrchestratorTests
 
         var result = await orchestrator.SyncOnceAsync("PC1", []);
 
-        Assert.Equal([@"\\srv\a"], result.ManagedUncs);
+        var managed = Assert.Single(result.ManagedPrinters);
+        Assert.Equal(@"\\srv\a", managed.Unc);
+        Assert.Equal(PrinterOrigin.Created, managed.Origin);
         Assert.Equal(["HR"], result.AddedNames);
         Assert.Equal(["Bad"], result.FailedNames);
     }
@@ -63,17 +107,21 @@ public sealed class SyncOrchestratorTests
     public async Task SyncOnce_NonAuthoritativeResponse_RemovesNothing_AndKeepsManagedSet()
     {
         // Server couldn't resolve the user (directory outage) → non-authoritative
-        // empty set. The client must keep its printers, not uninstall them.
+        // empty set. The client must keep its printers, not uninstall them, and
+        // must not adopt anything off an unconfirmed response.
         var api = new SyncApiClient(StubHttpClient(new SyncResponseDto([], Authoritative: false)));
         var applier = new RecordingApplier(installed: [@"\\srv\a", @"\\srv\b"]);
         var orchestrator = new SyncOrchestrator(api, applier);
 
-        var managedAfter = await orchestrator.SyncOnceAsync("PC1", [@"\\srv\a", @"\\srv\b"]);
+        var result = await orchestrator.SyncOnceAsync("PC1", [Created(@"\\srv\a"), Adopted(@"\\srv\b")]);
 
         Assert.Empty(applier.Applied!.ToAdd);
         Assert.Empty(applier.Applied.ToRemove);
-        Assert.Equal([@"\\srv\a", @"\\srv\b"], managedAfter.ManagedUncs.OrderBy(u => u));
-        Assert.Empty(managedAfter.AddedNames);
+        Assert.Empty(applier.Applied.ToAdopt);
+        Assert.Equal([@"\\srv\a", @"\\srv\b"], result.ManagedPrinters.Select(m => m.Unc).OrderBy(u => u));
+        // Provenance survives a non-authoritative cycle untouched.
+        Assert.Equal(PrinterOrigin.Adopted, result.ManagedPrinters.Single(m => m.Unc == @"\\srv\b").Origin);
+        Assert.Empty(result.AddedNames);
     }
 
     [Fact]

@@ -83,5 +83,44 @@ public sealed class PrinterReconcilerTests
 
         Assert.Equal(2, plan.ToAdd.Count);
         Assert.Empty(plan.ToRemove);
+        Assert.Empty(plan.ToAdopt);
+    }
+
+    [Fact]
+    public void DesiredPrinterAlreadyInstalledButUnmanaged_IsAdopted_NotReadded()
+    {
+        // A printer matching a desired UNC already exists (e.g. PaperCut left it)
+        // but isn't managed. It must be adopted, never re-added.
+        var desired = new SyncResponseDto([P(@"\\srv\a")]);
+
+        var plan = PrinterReconciler.Reconcile(desired, previouslyManaged: [], currentlyInstalled: [@"\\srv\a"]);
+
+        Assert.Empty(plan.ToAdd);
+        Assert.Empty(plan.ToRemove);
+        Assert.Equal([@"\\srv\a"], plan.ToAdopt);
+    }
+
+    [Fact]
+    public void AlreadyManagedPrinter_IsNotAdoptedAgain()
+    {
+        // A printer we already manage is never re-adopted (nothing to claim).
+        var desired = new SyncResponseDto([P(@"\\srv\a")]);
+        var managed = new[] { @"\\srv\a" };
+
+        var plan = PrinterReconciler.Reconcile(desired, managed, currentlyInstalled: [@"\\srv\a"]);
+
+        Assert.Empty(plan.ToAdd);
+        Assert.Empty(plan.ToRemove);
+        Assert.Empty(plan.ToAdopt);
+    }
+
+    [Fact]
+    public void NonAuthoritative_AdoptsNothing()
+    {
+        var desired = new SyncResponseDto([P(@"\\srv\a")], Authoritative: false);
+
+        var plan = PrinterReconciler.Reconcile(desired, [], currentlyInstalled: [@"\\srv\a"]);
+
+        Assert.Empty(plan.ToAdopt);
     }
 }

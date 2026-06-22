@@ -3,9 +3,19 @@ using OpenPrintDeploy.Shared.Sync;
 namespace OpenPrintDeploy.Client.Core;
 
 /// <summary>What the applier must do to converge on the server's resolved set.</summary>
+/// <param name="ToAdd">Desired printers not yet installed — the applier adds these.</param>
+/// <param name="ToRemove">Managed printers no longer desired — the applier removes these.</param>
+/// <param name="ToAdopt">
+/// Desired printers already present on the machine that OPD does not yet track
+/// (typically a connection a prior tool such as PaperCut Print Deploy left to
+/// the same UNC). The applier does nothing with these — adoption is pure
+/// metadata; the caller records them as managed so the reconcile loop owns their
+/// lifecycle from now on. No re-add means no flicker and no default-printer reset.
+/// </param>
 public sealed record ReconcileResult(
     IReadOnlyList<PrinterDto> ToAdd,
-    IReadOnlyList<string> ToRemove);
+    IReadOnlyList<string> ToRemove,
+    IReadOnlyList<string> ToAdopt);
 
 /// <summary>
 /// Pure diff between the server's desired printer set and the set this client
@@ -33,7 +43,7 @@ public static class PrinterReconciler
         // Printers re-converge on the next sync once the directory recovers.
         if (!desired.Authoritative)
         {
-            return new ReconcileResult([], []);
+            return new ReconcileResult([], [], []);
         }
 
         var desiredUncs = desired.Printers
@@ -51,6 +61,14 @@ public static class PrinterReconciler
             .Where(unc => !desiredUncs.Contains(unc))
             .ToList();
 
-        return new ReconcileResult(toAdd, toRemove);
+        // Adopt: a desired printer already on the machine that we don't yet
+        // track. Claim it without re-adding (it's already installed, so it's not
+        // in toAdd) — the reconcile loop then owns it like any other managed
+        // printer. Match by UNC, the connection's true identity.
+        var toAdopt = desiredUncs
+            .Where(unc => installed.Contains(unc) && !managed.Contains(unc))
+            .ToList();
+
+        return new ReconcileResult(toAdd, toRemove, toAdopt);
     }
 }

@@ -126,8 +126,8 @@ public sealed class SyncCoordinator : IDisposable
     {
         var managed = _state.Load();
         var result = await _orchestrator!.SyncOnceAsync(_machineName, managed, ct);
-        _state.Save(result.ManagedUncs);
-        return SyncOutcome.Success(result.ManagedUncs.Count, result.AddedNames, result.FailedNames);
+        _state.Save(result.ManagedPrinters);
+        return SyncOutcome.Success(result.ManagedPrinters.Count, result.AddedNames, result.FailedNames);
     }
 
     private bool EnsureClient()
