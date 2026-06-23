@@ -39,35 +39,29 @@
 <div class="card mt-3" style="max-width: 640px;">
     <div class="card-body">
         <h5 class="card-title">Client installer</h5>
-        <p class="card-text text-muted mb-2">
-            Pre-named for this server. Wrap as-is for Intune. Saves as <code>@_msiFileName</code>
-        </p>
         @if (_msiAvailable)
         {
-            <a class="btn btn-sm btn-primary" href="download/client-msi">Download client MSI</a>
+            <p class="card-text text-muted mb-2">
+                Download, then rename to <code>OpenPrintDeploy.Client.msi</code> and wrap with IntuneWinAppUtil.
+            </p>
+            <a class="btn btn-sm btn-primary mb-3" href="download/client-msi">Download client MSI</a>
 
-            @if (HttpsState is { Enabled: true, Bound: true, SelfSigned: true, Thumbprint: not null })
-            {
-                <div class="alert alert-info mt-3 mb-0">
-                    <p class="mb-1">
-                        <strong>Manual install:</strong> download and run it as-is — the server and its
-                        self-signed certificate ride in the filename (<code>@_msiFileName</code>), so it trusts
-                        this server automatically.
-                    </p>
-                    <hr class="my-2" />
-                    <p class="mb-1">
-                        <strong>Intune / scripted:</strong> rename the file to a simple name
-                        (e.g. <code>OpenPrintDeploy.Client.msi</code>) before wrapping with IntuneWinAppUtil,
-                        and set the install command:
-                    </p>
-                    <pre class="mb-1"><code>msiexec /i "OpenPrintDeploy.Client.msi" SERVER="https://@(HttpsState.Host):@(HttpsState.Port)" CERTTHUMBPRINT="@HttpsState.Thumbprint" /quiet</code></pre>
-                    <p class="mb-0 small text-muted">
-                        The auto-pin filename can trip packaging tools, so rename + properties is the reliable
-                        path for fleet deployment. A domain-CA certificate (<code>Https:PfxPath</code>) or
-                        pushing the cert to clients’ Trusted Root removes the need for <code>CERTTHUMBPRINT</code>.
-                    </p>
-                </div>
-            }
+            <div class="mb-2">
+                <div class="small text-muted mb-1">Install command</div>
+                <pre class="border rounded bg-light p-2 mb-0"><code>@_installCommand</code></pre>
+            </div>
+
+            <div class="mb-2">
+                <div class="small text-muted mb-1">Uninstall command</div>
+                <pre class="border rounded bg-light p-2 mb-0"><code>msiexec /x "OpenPrintDeploy.Client.msi" /qn</code></pre>
+            </div>
+
+            <div class="mb-0">
+                <div class="small text-muted mb-1">Detection rule — Registry</div>
+                <pre class="border rounded bg-light p-2 mb-0"><code>Key:    HKLM\SOFTWARE\OpenPrintDeploy\Client
+Value:  Version
+Method: String — Equals — @_clientVersion</code></pre>
+            </div>
         }
         else
         {
@@ -82,17 +76,29 @@
 @code {
     private int _printerCount;
     private int _zoneCount;
-    private string _msiFileName = "";
     private bool _msiAvailable;
+    private string _installCommand = "";
+    private readonly string _clientVersion = BuildInfo.Version;
 
     protected override async Task OnInitializedAsync()
     {
         _printerCount = (await Printers.GetAllAsync()).Count;
         _zoneCount = (await Zones.GetAllAsync()).Count;
 
-        var pin = HttpsState is { Enabled: true, Bound: true, SelfSigned: true } ? HttpsState.Thumbprint : null;
-        _msiFileName = ClientInstallerDownload.MsiDownloadFileName(Config, pin);
         _msiAvailable = File.Exists(
             ClientInstallerDownload.ResolveMsiPath(Config, Env.ContentRootPath));
+
+        var host = HttpsState is { Enabled: true } && !string.IsNullOrWhiteSpace(HttpsState.Host)
+            ? HttpsState.Host
+            : ClientInstallerDownload.ResolveHost(Config);
+        var port = HttpsState is { Enabled: true } ? HttpsState.Port : 5443;
+        var server = $"https://{host}:{port}";
+
+        // Pin the thumbprint only for a self-signed cert; a CA-issued cert clients
+        // already trust needs none.
+        var pin = HttpsState is { Bound: true, SelfSigned: true } ? HttpsState.Thumbprint : null;
+        _installCommand = string.IsNullOrWhiteSpace(pin)
+            ? $"msiexec /i \"OpenPrintDeploy.Client.msi\" SERVER=\"{server}\" /qn"
+            : $"msiexec /i \"OpenPrintDeploy.Client.msi\" SERVER=\"{server}\" CERTTHUMBPRINT=\"{pin}\" /qn";
     }
 }
