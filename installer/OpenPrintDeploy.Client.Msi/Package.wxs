@@ -180,8 +180,23 @@
         Impersonate="no"
         Return="asyncNoWait" />
 
+    <!-- On a true uninstall (NOT a major-upgrade removal), remove the per-user
+         printer connections OPD created before the tray binaries go. Runs as
+         SYSTEM and routes through the same session launcher to clean the console
+         user's printers; runs BEFORE RemoveFiles so the exe still exists, and
+         Return=ignore so a cleanup hiccup can never block the uninstall.
+         Adopted (pre-existing) printers are left untouched by the tray. -->
+    <CustomAction Id="CleanupTraySession"
+        FileRef="TrayExe"
+        ExeCommand="--cleanup-active-session"
+        Execute="deferred"
+        Impersonate="no"
+        Return="ignore" />
+
     <InstallExecuteSequence>
       <Custom Action="LaunchTraySession" After="WriteRegistryValues" Condition="NOT REMOVE" />
+      <Custom Action="CleanupTraySession" Before="RemoveFiles"
+              Condition="(REMOVE=&quot;ALL&quot;) AND NOT UPGRADINGPRODUCTCODE" />
     </InstallExecuteSequence>
 
   </Package>

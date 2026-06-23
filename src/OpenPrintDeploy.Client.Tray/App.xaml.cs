@@ -26,15 +26,49 @@ public partial class App : Application
     /// </summary>
     private const string LaunchActiveSessionArg = "--launch-active-session";
 
+    /// <summary>SYSTEM-context uninstall flag: relaunch as the console user to clean their printers.</summary>
+    private const string CleanupActiveSessionArg = "--cleanup-active-session";
+
+    /// <summary>User-context flag: remove the printers OPD created for this user, then exit.</summary>
+    private const string CleanupArg = "--cleanup";
+
+    private static bool HasArg(StartupEventArgs e, string arg)
+        => e.Args.Any(a => string.Equals(a, arg, StringComparison.OrdinalIgnoreCase));
+
     protected override async void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
 
         // Launch-now path: spawn the tray in the interactive session and exit
         // immediately — never build the UI in this (possibly session-0) process.
-        if (e.Args.Any(a => string.Equals(a, LaunchActiveSessionArg, StringComparison.OrdinalIgnoreCase)))
+        if (HasArg(e, LaunchActiveSessionArg))
         {
             TraySessionLauncher.LaunchInteractive();
+            Shutdown(0);
+            return;
+        }
+
+        // Uninstall cleanup. The MSI runs this as SYSTEM; relaunch as the console
+        // user so we can remove THEIR per-user connections. If we're already a
+        // user (manual run), clean inline.
+        if (HasArg(e, CleanupActiveSessionArg))
+        {
+            if (OperatingSystem.IsWindows() && System.Security.Principal.WindowsIdentity.GetCurrent().IsSystem)
+            {
+                TraySessionLauncher.LaunchInteractive(CleanupArg);
+            }
+            else
+            {
+                await CleanupManagedPrintersAsync();
+            }
+
+            Shutdown(0);
+            return;
+        }
+
+        if (HasArg(e, CleanupArg))
+        {
+            await CleanupManagedPrintersAsync();
             Shutdown(0);
             return;
         }
@@ -227,6 +261,37 @@ public partial class App : Application
             _notifyIcon.ShowBalloonTip(
                 6000, Branding.ProductName,
                 outcome.Error ?? "Sync failed.", Forms.ToolTipIcon.Error);
+        }
+    }
+
+    /// <summary>
+    /// Removes the printer connections OPD created for the current user (used at
+    /// uninstall so deployed printers don't orphan). Adopted printers — ones that
+    /// existed before OPD claimed them — are deliberately left in place. Reuses
+    /// the applier's best-effort removal path; failures are logged, never thrown.
+    /// </summary>
+    private static async Task CleanupManagedPrintersAsync()
+    {
+        try
+        {
+            var store = new ManagedStateStore();
+            var created = store.Load()
+                .Where(m => m.Origin == OpenPrintDeploy.Client.Core.PrinterOrigin.Created)
+                .Select(m => m.Unc)
+                .ToList();
+
+            if (created.Count > 0)
+            {
+                await new WindowsPrinterApplier().ApplyAsync(
+                    new OpenPrintDeploy.Client.Core.ReconcileResult([], created, []));
+            }
+
+            store.Save([]);
+            ClientLog.Info($"Uninstall cleanup removed {created.Count} OPD-managed printer(s).");
+        }
+        catch (Exception ex)
+        {
+            ClientLog.Error($"Uninstall cleanup failed: {ex.Message}");
         }
     }
 

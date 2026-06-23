@@ -21,7 +21,7 @@ namespace OpenPrintDeploy.Client.Tray;
 /// </summary>
 internal static class TraySessionLauncher
 {
-    public static bool LaunchInteractive()
+    public static bool LaunchInteractive(string? extraArgs = null)
     {
         var trayExe = Environment.ProcessPath;
         if (string.IsNullOrEmpty(trayExe))
@@ -34,11 +34,12 @@ internal static class TraySessionLauncher
             using var identity = WindowsIdentity.GetCurrent();
             if (identity.IsSystem)
             {
-                return TryLaunchInActiveSession(trayExe);
+                return TryLaunchInActiveSession(trayExe, extraArgs);
             }
 
             using var process = Process.Start(new ProcessStartInfo(trayExe)
             {
+                Arguments = extraArgs ?? string.Empty,
                 UseShellExecute = false,
                 WorkingDirectory = Path.GetDirectoryName(trayExe)!,
             });
@@ -51,7 +52,7 @@ internal static class TraySessionLauncher
         }
     }
 
-    private static bool TryLaunchInActiveSession(string trayExe)
+    private static bool TryLaunchInActiveSession(string trayExe, string? extraArgs)
     {
         var sessionId = WTSGetActiveConsoleSessionId();
         if (sessionId == 0xFFFFFFFF)
@@ -82,10 +83,13 @@ internal static class TraySessionLauncher
             const uint CREATE_NO_WINDOW = 0x08000000;
             var flags = CREATE_NO_WINDOW | (envBlock != IntPtr.Zero ? CREATE_UNICODE_ENVIRONMENT : 0);
 
+            var commandLine = string.IsNullOrWhiteSpace(extraArgs)
+                ? $"\"{trayExe}\""
+                : $"\"{trayExe}\" {extraArgs}";
             var ok = CreateProcessAsUser(
                 userToken,
                 lpApplicationName: null,
-                lpCommandLine: $"\"{trayExe}\"",
+                lpCommandLine: commandLine,
                 lpProcessAttributes: IntPtr.Zero,
                 lpThreadAttributes: IntPtr.Zero,
                 bInheritHandles: false,
