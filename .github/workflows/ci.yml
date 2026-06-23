@@ -1,0 +1,37 @@
+name: ci
+
+# Build, test, and package on every push to main and every pull request — so
+# both code AND installer (WiX) breakage are caught before a release tag, not
+# after. The release workflow (release.yml) only runs on v* tags.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A newer push to the same branch/PR cancels the in-flight run.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Build + test
+        run: dotnet test OpenPrintDeploy.sln -c Release -p:NuGetAudit=true --nologo
+
+      # The MSI projects aren't in the solution (they need a published payload to
+      # harvest), so `dotnet test` never builds them. Build them explicitly here
+      # so WiX authoring errors fail CI instead of surfacing only at release time.
+      - name: Build installers (server + client MSI)
+        run: .\scripts\Publish-Server.ps1
+        shell: powershell

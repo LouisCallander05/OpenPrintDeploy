@@ -64,7 +64,7 @@ To run the server locally:
 cp src/OpenPrintDeploy.Server/appsettings.Development.json{.example,}
 
 dotnet run --project src/OpenPrintDeploy.Server
-# → http://localhost:5080/health
+# → http://localhost:5080/health   (dev only; production is HTTPS-only on 5443)
 ```
 
 Without `appsettings.Development.json` the server falls back to the production
@@ -94,14 +94,20 @@ Copy `OpenPrintDeploy.Server.msi` to the print server, then install it — eithe
 that block PowerShell by default (Cylance, etc.) won't reject it. The MSI
 installs to `C:\Program Files\OpenPrintDeploy`, registers `OpenPrintDeployServer`
 as a Windows service (Local SYSTEM, autostart, restart-on-failure), opens TCP
-5080 in the firewall, adds a Start Menu shortcut (**OpenPrintDeploy →
+**5443** in the firewall, adds a Start Menu shortcut (**OpenPrintDeploy →
 OpenPrintDeploy Admin**), and starts the service. The database lives at
 `C:\ProgramData\OpenPrintDeploy\app.db` and survives upgrades and uninstalls.
+
+The server is **HTTPS-only on port 5443** by default (open *that* port in the
+firewall, not 5080). On first boot it provisions a self-signed certificate for
+this host — distribute its public cert to clients' Trusted Root, pin its
+thumbprint on the client, or supply your own (`Https:PfxPath`). See
+`docs/architecture.md` → *Transport security (TLS)*.
 
 Open the admin UI from the Start Menu shortcut, or from a workstation:
 
 ```
-http://<print-server>:5080/admin/directory
+https://<print-server>:5443/admin/directory
 ```
 
 Click **Test connection**. If LDAP, DC and search base auto-resolve and the
@@ -138,17 +144,21 @@ release also publishes the bare installer as `OpenPrintDeploy-client-win-x64.zip
 
 Install on a single workstation — any of:
 
+> **Current path is the MSI from the dashboard**, not the exe below — see
+> *Intune deployment*. The MSI auto-pins the server's certificate and uses
+> HTTPS:5443; the exe flow is retained for reference.
+
 ```cmd
 :: 1. Just run the downloaded "OpenPrintDeploy - <host>.exe" (double-click -> UAC).
-::    It reads <host> from its own filename and configures http://<host>:5080.
+::    It reads <host> from its own filename and configures https://<host>:5443.
 
 :: 2. Or pass the server explicitly (overrides the filename):
-OpenPrintDeploy.Client.Installer.exe install --server http://printsrv01.corp.local:5080
+OpenPrintDeploy.Client.Installer.exe install --server https://printsrv01.corp.local:5443
 ```
 
 **Filename-based config:** a file named `OpenPrintDeploy - <host>.exe` configures
-`http://<host>:5080`. Filenames can't carry a scheme or port, so `http` and port
-`5080` are applied automatically; pass `--server` to override. This is the path
+`https://<host>:5443`. Filenames can't carry a scheme or port, so `https` and port
+`5443` are applied automatically; pass `--server` to override. This is the path
 for non-technical deployers and for Intune — name once, run anywhere.
 
 The installer extracts binaries to `C:\Program Files\OpenPrintDeploy\Tray\`,
@@ -201,7 +211,7 @@ filename already carries the server, so just run it:
 Or, with the bare installer, pass the server explicitly:
 
 ```
-OpenPrintDeploy.Client.Installer.exe install --server http://printsrv01.corp.local:5080
+OpenPrintDeploy.Client.Installer.exe install --server https://printsrv01.corp.local:5443
 ```
 
 Intune uninstall command:
