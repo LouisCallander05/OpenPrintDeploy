@@ -61,6 +61,7 @@ public static class AuthExtensions
         }
 
         services.AddSingleton(new AuthSchemes(adminScheme, clientScheme));
+        services.AddSingleton<LoginThrottle>();
         services.AddSingleton<AdminAccessStore>();
         services.AddSingleton<AdminAccessEvaluator>();
         services.AddScoped<IAuthorizationHandler, AdminAuthorizationHandler>();

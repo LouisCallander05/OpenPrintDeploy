@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Encodings.Web;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.Extensions.Options;
+using OpenPrintDeploy.Server.Directory;
 using OpenPrintDeploy.Server.Https;
 
 namespace OpenPrintDeploy.Server.Auth;
@@ -21,15 +22,18 @@ public sealed class BasicAuthenticationHandler : AuthenticationHandler<Authentic
     public const string SchemeName = "Basic";
 
     private readonly HttpsStatus _https;
+    private readonly LoginThrottle _throttle;
 
     public BasicAuthenticationHandler(
         IOptionsMonitor<AuthenticationSchemeOptions> options,
         ILoggerFactory logger,
         UrlEncoder encoder,
-        HttpsStatus https)
+        HttpsStatus https,
+        LoginThrottle throttle)
         : base(options, logger, encoder)
     {
         _https = https;
+        _throttle = throttle;
     }
 
     /// <summary>True when we must refuse credentials on this (non-TLS) request.</summary>
@@ -78,14 +82,28 @@ public sealed class BasicAuthenticationHandler : AuthenticationHandler<Authentic
             return Task.FromResult(AuthenticateResult.Fail("Basic authentication requires Windows."));
         }
 
+        // Brute-force throttle: once a username has failed enough times, reject
+        // without touching AD for the cooldown — both slowing guessing and
+        // keeping repeated bad binds from locking out the real AD account.
+        var throttleKey = DirectoryUsername.Normalize(username);
+        if (_throttle.IsLockedOut(throttleKey, out var retryAfter))
+        {
+            Logger.LogWarning("Admin sign-in throttled for {User}: {Seconds}s remaining.",
+                throttleKey, (int)retryAfter.TotalSeconds);
+            return Task.FromResult(AuthenticateResult.Fail("Too many failed attempts. Try again shortly."));
+        }
+
         ClaimsIdentity identity;
         try
         {
             using var windows = WindowsLogon.Validate(username.Trim(), password);
             if (windows is null)
             {
+                _throttle.RecordFailure(throttleKey);
                 return Task.FromResult(AuthenticateResult.Fail("Invalid username or password."));
             }
+
+            _throttle.RecordSuccess(throttleKey);
 
             // Copy the claims (Name + group SIDs) out of the Windows identity into
             // a plain one, so we don't retain a Windows token handle per request.
