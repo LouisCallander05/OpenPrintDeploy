@@ -201,14 +201,13 @@ public partial class App : Application
 
         if (outcome.Ok)
         {
-            var text = outcome.AddedNames.Count switch
-            {
-                0 => $"{outcome.PrinterCount} printer(s) in sync.",
-                1 => $"Printer added: {outcome.AddedNames[0]}",
-                _ => $"{outcome.AddedNames.Count} printers added.",
-            };
+            // Report the total assigned printer count, not how many were
+            // (re)applied this cycle — "12 printers assigned" reads as the steady
+            // state, whereas "12 added" wrongly implies they were new each time.
+            var count = outcome.PrinterCount;
+            var text = $"{count} printer{(count == 1 ? "" : "s")} assigned.";
 
-            // Some printers installed, others didn't (e.g. a conflict with an
+            // Some printers couldn't be installed (e.g. a conflict with an
             // orphaned printer) — say so rather than claim a clean sync.
             if (outcome.FailedNames.Count > 0)
             {
