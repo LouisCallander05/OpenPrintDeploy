@@ -35,7 +35,10 @@ param(
     # SemVer-ish string. CI passes the git tag with the leading v stripped
     # (e.g. "0.1.3"); local devs leave it blank. It's sanitized to a numeric
     # MSI ProductVersion below (MSI versions can't carry a pre-release suffix).
-    [string]$Version = ""
+    [string]$Version = "",
+    # Code-signing cert thumbprint; blank = unsigned (default). Signs both the
+    # bundled client MSI and the server MSI. Honours OPD_SIGN_THUMBPRINT.
+    [string]$SignThumbprint = $env:OPD_SIGN_THUMBPRINT
 )
 
 $ErrorActionPreference = "Stop"
@@ -102,7 +105,7 @@ Remove-Item -Recurse -Force $clientTmp
 # release asset) and is copied into the payload before WiX harvests it.
 Write-Host "Building tray-client MSI to bundle for download..."
 & (Join-Path $PSScriptRoot "Publish-Client-Msi.ps1") `
-    -Configuration $Configuration -Runtime $Runtime -Version $Version
+    -Configuration $Configuration -Runtime $Runtime -Version $Version -SignThumbprint $SignThumbprint
 $clientMsiSrc = Join-Path $repoRoot "publish/OpenPrintDeploy.Client.msi"
 if (-not (Test-Path $clientMsiSrc)) { throw "Client MSI missing after Publish-Client-Msi.ps1." }
 Copy-Item -Path $clientMsiSrc -Destination $clientDest -Force
@@ -136,6 +139,8 @@ if (-not $builtMsi) { throw "MSI not found under $msiBin after build." }
 
 $finalMsi = Join-Path $repoRoot "publish/OpenPrintDeploy.Server.msi"
 Copy-Item -Path $builtMsi.FullName -Destination $finalMsi -Force
+
+& (Join-Path $PSScriptRoot "Sign-File.ps1") -Path $finalMsi -Thumbprint $SignThumbprint
 
 Write-Host ""
 Write-Host "Publish complete:" -ForegroundColor Green

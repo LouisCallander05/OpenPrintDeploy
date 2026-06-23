@@ -28,7 +28,9 @@ leave it blank. Sanitized to a numeric MSI ProductVersion below.
 param(
     [string]$Configuration = "Release",
     [string]$Runtime = "win-x64",
-    [string]$Version = ""
+    [string]$Version = "",
+    # Code-signing cert thumbprint; blank = unsigned (default). Honours OPD_SIGN_THUMBPRINT.
+    [string]$SignThumbprint = $env:OPD_SIGN_THUMBPRINT
 )
 
 $ErrorActionPreference = "Stop"
@@ -75,6 +77,8 @@ if (-not $builtMsi) { throw "MSI not found under $msiBin after build." }
 $finalMsi = Join-Path $repoRoot "publish/OpenPrintDeploy.Client.msi"
 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $finalMsi) | Out-Null
 Copy-Item -Path $builtMsi.FullName -Destination $finalMsi -Force
+
+& (Join-Path $PSScriptRoot "Sign-File.ps1") -Path $finalMsi -Thumbprint $SignThumbprint
 
 # Tidy the tray intermediate; the MSI is the whole artifact.
 Remove-Item -Recurse -Force $trayDir
