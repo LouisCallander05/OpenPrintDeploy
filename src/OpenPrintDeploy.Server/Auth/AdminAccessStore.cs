@@ -22,26 +22,40 @@ public sealed class AdminAccessStore
 
     public string FilePath => _path;
 
-    public AdminAccess Load()
+    /// <summary>The grants only (empty when missing OR unreadable).</summary>
+    public AdminAccess Load() => Read().Access;
+
+    /// <summary>
+    /// Loads the stored grants, distinguishing "no file yet" (legitimate
+    /// first-run open state) from "file present but unreadable" (corrupt or
+    /// tampered). The latter must NOT collapse to the open state — a damaged
+    /// admin file silently re-granting every authenticated user is a fail-open
+    /// hole, so callers treat <see cref="AdminAccessLoad.Unreadable"/> as sealed
+    /// and rely on the appsettings break-glass grants to recover.
+    /// </summary>
+    public AdminAccessLoad Read()
     {
         lock (_lock)
         {
+            if (!File.Exists(_path))
+            {
+                return new AdminAccessLoad(AdminAccess.Empty, Unreadable: false);
+            }
+
             try
             {
-                if (!File.Exists(_path))
-                {
-                    return AdminAccess.Empty;
-                }
-
                 var dto = JsonSerializer.Deserialize<Dto>(File.ReadAllText(_path));
                 return dto is null
-                    ? AdminAccess.Empty
-                    : new AdminAccess(Clean(dto.Groups), Clean(dto.Users));
+                    ? new AdminAccessLoad(AdminAccess.Empty, Unreadable: true)
+                    : new AdminAccessLoad(new AdminAccess(Clean(dto.Groups), Clean(dto.Users)), Unreadable: false);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Could not read admin-access file {Path}; treating as empty.", _path);
-                return AdminAccess.Empty;
+                _logger.LogError(ex,
+                    "Admin-access file {Path} exists but could not be read; sealing admin access (only " +
+                    "appsettings Auth:Admin grants apply) rather than re-opening it to every authenticated user.",
+                    _path);
+                return new AdminAccessLoad(AdminAccess.Empty, Unreadable: true);
             }
         }
     }

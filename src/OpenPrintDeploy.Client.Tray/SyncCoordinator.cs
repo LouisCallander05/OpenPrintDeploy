@@ -31,15 +31,17 @@ public sealed class SyncCoordinator : IDisposable
     private readonly TrayAuthenticator _auth;
     private readonly ManagedStateStore _state;
     private readonly string _machineName;
+    private readonly IReadOnlyList<string> _allowedPrintServers;
 
     private HttpClient? _http;
     private SyncOrchestrator? _orchestrator;
 
-    public SyncCoordinator(TrayAuthenticator auth)
+    public SyncCoordinator(TrayAuthenticator auth, IReadOnlyList<string>? allowedPrintServers = null)
     {
         _auth = auth;
         _state = new ManagedStateStore();
         _machineName = Environment.MachineName;
+        _allowedPrintServers = allowedPrintServers ?? [];
     }
 
     public async Task<SyncOutcome> RunOnceAsync(CancellationToken ct = default)
@@ -144,7 +146,7 @@ public sealed class SyncCoordinator : IDisposable
         }
 
         _http = client;
-        _orchestrator = new SyncOrchestrator(new SyncApiClient(_http), new WindowsPrinterApplier());
+        _orchestrator = new SyncOrchestrator(new SyncApiClient(_http), new WindowsPrinterApplier(_allowedPrintServers));
         return true;
     }
 
@@ -152,7 +154,7 @@ public sealed class SyncCoordinator : IDisposable
     {
         _http?.Dispose();
         _http = client;
-        _orchestrator = new SyncOrchestrator(new SyncApiClient(_http), new WindowsPrinterApplier());
+        _orchestrator = new SyncOrchestrator(new SyncApiClient(_http), new WindowsPrinterApplier(_allowedPrintServers));
     }
 
     public void Dispose() => _http?.Dispose();

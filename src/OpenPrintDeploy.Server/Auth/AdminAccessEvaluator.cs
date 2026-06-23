@@ -30,17 +30,21 @@ public sealed class AdminAccessEvaluator
     public void SaveStored(AdminAccess access) => _store.Save(access);
 
     /// <summary>Combines the appsettings grants with the supplied stored grants.</summary>
-    public EffectiveAdminAccess Combine(AdminAccess stored)
+    public EffectiveAdminAccess Combine(AdminAccess stored, bool storeSealed = false)
     {
         var groups = _configured.Groups.Concat(stored.Groups)
             .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         var users = _configured.Users.Concat(stored.Users)
             .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         var sids = _configured.GroupSids.Distinct(StringComparer.Ordinal).ToList();
-        return new EffectiveAdminAccess(groups, users, sids);
+        return new EffectiveAdminAccess(groups, users, sids, Sealed: storeSealed);
     }
 
-    public EffectiveAdminAccess GetEffective() => Combine(_store.Load());
+    public EffectiveAdminAccess GetEffective()
+    {
+        var load = _store.Read();
+        return Combine(load.Access, load.Unreadable);
+    }
 
     public Task<bool> IsAdminAsync(ClaimsPrincipal user, CancellationToken ct = default)
         => IsAdminAsync(user, GetEffective(), ct);

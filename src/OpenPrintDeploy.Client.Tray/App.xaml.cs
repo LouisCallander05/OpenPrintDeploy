@@ -64,7 +64,7 @@ public partial class App : Application
             settings.ServerBaseAddress,
             ctx => Dispatcher.Invoke(() => CredentialPrompt.Show(ctx)),
             settings.ServerCertificateThumbprint);
-        _coordinator = new SyncCoordinator(_authenticator);
+        _coordinator = new SyncCoordinator(_authenticator, settings.AllowedPrintServers);
 
         var menu = new Forms.ContextMenuStrip { ShowImageMargin = false };
 

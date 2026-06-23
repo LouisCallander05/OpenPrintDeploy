@@ -15,6 +15,16 @@ public sealed class WindowsPrinterApplier : IPrinterApplier
 {
     private const uint PrinterEnumConnections = 0x00000004;
 
+    private readonly IReadOnlyCollection<string> _allowedPrintServers;
+
+    /// <param name="allowedPrintServers">
+    /// Hosts whose printers may be installed. Empty enforces only UNC-format
+    /// validation (no host allow-listing). The tray defaults this to the
+    /// configured server's host; an admin can widen it for split print servers.
+    /// </param>
+    public WindowsPrinterApplier(IReadOnlyCollection<string>? allowedPrintServers = null)
+        => _allowedPrintServers = allowedPrintServers ?? [];
+
     public Task<ApplyOutcome> ApplyAsync(ReconcileResult plan, CancellationToken ct = default)
     {
         var added = new List<PrinterDto>();
@@ -23,6 +33,16 @@ public sealed class WindowsPrinterApplier : IPrinterApplier
         foreach (var printer in plan.ToAdd)
         {
             ct.ThrowIfCancellationRequested();
+
+            // Defence in depth: never hand the spooler a malformed UNC or a host
+            // outside the allow-list, even though the server is TLS-pinned — a
+            // compromised server must not be able to redirect the spooler.
+            if (!PrinterUncPolicy.IsAllowed(printer.UncPath, _allowedPrintServers, out var blockReason))
+            {
+                failed.Add(new PrinterApplyError(printer, $"blocked: {blockReason}"));
+                continue;
+            }
+
             // Best-effort per printer: a single failed add (a name clash with an
             // orphaned printer, an unreachable server, a point-and-print block)
             // must not stop the rest of the set from installing.

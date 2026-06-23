@@ -65,6 +65,12 @@
          operator/CA cert, or when the public cert is pushed to Trusted Root. -->
     <Property Id="CERTTHUMBPRINT" Secure="yes" />
 
+    <!-- Optional allow-list of print-server hosts the tray may install printers
+         from (comma-separated). Blank defaults to the configured server's host
+         (the print server is usually the OPD server). Set this only when printers
+         live on different print servers. -->
+    <Property Id="ALLOWEDSERVERS" Secure="yes" />
+
     <Feature Id="Main" Title="Open Print Deploy Client" Level="1">
       <ComponentGroupRef Id="TrayFiles" />
       <ComponentRef Id="TrayExeComponent" />
@@ -127,6 +133,8 @@
                        Name="ServerBaseAddress" Type="string" Value="[SERVER]" />
         <RegistryValue Root="HKLM" Key="SOFTWARE\OpenPrintDeploy\Client"
                        Name="ServerCertificateThumbprint" Type="string" Value="[CERTTHUMBPRINT]" />
+        <RegistryValue Root="HKLM" Key="SOFTWARE\OpenPrintDeploy\Client"
+                       Name="AllowedPrintServers" Type="string" Value="[ALLOWEDSERVERS]" />
         <RegistryValue Root="HKLM" Key="SOFTWARE\OpenPrintDeploy\Client"
                        Name="InstallerSource" Type="string" Value="[OriginalDatabase]" />
       </Component>

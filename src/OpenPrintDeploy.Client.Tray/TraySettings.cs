@@ -41,10 +41,19 @@ public sealed class TraySettings
     /// </summary>
     public string? ServerCertificateThumbprint { get; init; }
 
+    /// <summary>
+    /// Hosts whose printers the client may install. Defaults to the configured
+    /// server's host (the common case: the print server IS the OPD server). An
+    /// admin widens it (<c>ALLOWEDSERVERS=</c> / registry / appsettings) when
+    /// printers live on different print servers.
+    /// </summary>
+    public required IReadOnlyList<string> AllowedPrintServers { get; init; }
+
     public static TraySettings Load()
     {
         var url = Environment.GetEnvironmentVariable("OPD_SERVER_URL");
         var thumbprint = Environment.GetEnvironmentVariable("OPD_SERVER_CERT_THUMBPRINT");
+        var allowed = Environment.GetEnvironmentVariable("OPD_ALLOWED_PRINT_SERVERS");
         var intervalMinutes = 5;
 
         var path = Path.Combine(AppContext.BaseDirectory, "appsettings.json");
@@ -63,6 +72,12 @@ public sealed class TraySettings
                     && server.TryGetProperty("CertificateThumbprint", out var pin))
                 {
                     thumbprint = pin.GetString();
+                }
+
+                if (string.IsNullOrWhiteSpace(allowed)
+                    && server.TryGetProperty("AllowedPrintServers", out var allowList))
+                {
+                    allowed = allowList.GetString();
                 }
 
                 if (server.TryGetProperty("SyncIntervalMinutes", out var interval)
@@ -97,6 +112,11 @@ public sealed class TraySettings
             }
         }
 
+        if (string.IsNullOrWhiteSpace(allowed))
+        {
+            allowed = ReadRegistryValue("AllowedPrintServers"); // explicit ALLOWEDSERVERS=
+        }
+
         if (string.IsNullOrWhiteSpace(url))
         {
             throw new InvalidOperationException(
@@ -104,13 +124,29 @@ public sealed class TraySettings
                 "OPD_SERVER_URL, or the MSI's SERVER property / filename).");
         }
 
+        var baseUri = new Uri(url, UriKind.Absolute);
+        var allowedServers = ParseHostList(allowed);
+        if (allowedServers.Count == 0)
+        {
+            // Secure default: only the configured server's host. The print server
+            // is the OPD server in the common case; widen via AllowedPrintServers.
+            allowedServers = [baseUri.Host];
+        }
+
         return new TraySettings
         {
-            ServerBaseAddress = new Uri(url, UriKind.Absolute),
+            ServerBaseAddress = baseUri,
             SyncInterval = TimeSpan.FromMinutes(intervalMinutes),
             ServerCertificateThumbprint = string.IsNullOrWhiteSpace(thumbprint) ? null : thumbprint.Trim(),
+            AllowedPrintServers = allowedServers,
         };
     }
+
+    /// <summary>Splits a comma/semicolon/whitespace-separated host list into trimmed, non-empty entries.</summary>
+    private static IReadOnlyList<string> ParseHostList(string? value)
+        => string.IsNullOrWhiteSpace(value)
+            ? []
+            : value.Split([',', ';', ' '], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
     /// <summary>Reads a single string value from the client registry key, or null if absent/unreadable.</summary>
     private static string? ReadRegistryValue(string name)

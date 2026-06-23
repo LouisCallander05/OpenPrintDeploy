@@ -34,6 +34,9 @@ per-user, owns the HTTP client, and does its own `Add-Printer` /
   domain-joined print server running as Local SYSTEM that's the computer
   account; nothing about the bind lives in config. A `Basic` bind with a
   configured `BindDn`/`BindPassword` is supported for non-joined hosts.
+  **LDAPS by default** (`Directory:Ldap:UseSsl=true`, port 636) so credential
+  binds and lookups aren't cleartext — requires a DC LDAPS cert the server
+  trusts (standard with AD CS).
 - **Dev header auth** (`X-Dev-User`) is registered *only* in the Development
   environment (`AuthExtensions`); production uses Basic/Negotiate. As a backstop
   the server refuses to start if it's running as a Windows service while
@@ -55,6 +58,20 @@ the open state; `/setup` then redirects away and can't re-open it. A "make my
 account an admin too" failsafe and the appsettings break-glass guard against
 lock-out. Pre-seeding `Auth:Admin:Groups`/`GroupSids` in appsettings skips
 onboarding entirely (the system is never open).
+
+A **corrupt/unreadable** `admin-access.json` fails **closed**, not open: it's
+treated as "sealed" (appsettings break-glass grants only), never collapsing back
+to the open "any authenticated user" state. A damaged file can lock admins out
+(recover via appsettings) but can never silently re-grant the whole domain.
+
+### Client print-server allow-list
+
+The tray validates every server-supplied UNC before handing it to the spooler:
+it must be a well-formed `\\host\share`, and its host must be on the allow-list
+(`PrinterUncPolicy`). The list defaults to the configured server's host, widened
+via `ALLOWEDSERVERS=` / registry / appsettings for split print servers. Defence
+in depth on top of TLS pinning — a compromised server still can't point the
+spooler at an arbitrary host (NTLM-relay / malicious point-and-print).
 
 ## Transport security (TLS)
 
