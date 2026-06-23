@@ -13,7 +13,7 @@ namespace OpenPrintDeploy.Server.Https;
 /// </summary>
 public static class HttpsProvisioner
 {
-    private const string FriendlyName = "OpenPrintDeploy Server (self-signed)";
+    internal const string FriendlyName = "OpenPrintDeploy Server (self-signed)";
 
     public static X509Certificate2? TryEnsureCertificate(HttpsOptions opts, string host, ILogger logger)
     {

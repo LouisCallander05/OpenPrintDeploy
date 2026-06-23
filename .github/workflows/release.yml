@@ -47,8 +47,12 @@ jobs:
       - name: Create Release + upload assets
         uses: softprops/action-gh-release@v2
         with:
+          # The server MSI is the primary artifact (it bundles the client). The
+          # bare client MSI is published too for admins who deploy via Intune with
+          # SERVER=/CERTTHUMBPRINT= properties rather than the dashboard download.
           files: |
             publish/OpenPrintDeploy.Server.msi
+            publish/OpenPrintDeploy.Client.msi
           draft: false
           prerelease: false
           generate_release_notes: true

@@ -108,6 +108,27 @@ Client server URL: an explicit `SERVER=` (or appsettings `Server:BaseAddress` /
 `OPD_SERVER_URL`) is honoured as-is; the MSI-filename fallback
 (`OpenPrintDeploy - host.msi`) derives `https://<host>:5443`.
 
+### Rotating / renewing the self-signed cert (runbook)
+
+A certificate's validity can't be changed in place, so "renewing" or lengthening
+the self-signed cert means **generating a new one** — which gets a **new
+thumbprint** and therefore requires **re-pinning every client**. Because the
+provisioner *reuses* an existing valid cert (it only regenerates within 7 days of
+expiry), a cert minted by an older, shorter-lived build keeps its old expiry
+until you force a regen. To do it deliberately:
+
+1. Ensure the server runs a build with the validity you want
+   (`Https:SelfSignedValidityYears`, default 100).
+2. Admin **Settings → Connection security → Regenerate certificate** (or delete
+   the cert with friendly name *"OpenPrintDeploy Server (self-signed)"* from
+   `certlm.msc` → Personal). The running server keeps serving until restart.
+3. `Restart-Service OpenPrintDeployServer` — a fresh cert is minted on startup.
+4. Read the new thumbprint off the Settings card and re-pin clients
+   (`CERTTHUMBPRINT=` / registry `ServerCertificateThumbprint`).
+
+Avoid the whole cycle with an operator/CA cert (`Https:PfxPath`): trust is by
+issuer, so renewals don't change what clients trust — no pinning, no re-pin.
+
 ### Migrating an existing HTTP fleet
 
 HTTPS-only means a client still pointed at `http://host:5080` breaks. To move a

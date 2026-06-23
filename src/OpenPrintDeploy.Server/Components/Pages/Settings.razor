@@ -7,6 +7,7 @@
 @inject AdminAccessEvaluator Evaluator
 @inject AuthenticationStateProvider AuthState
 @inject HttpsStatus HttpsState
+@inject ILoggerFactory LoggerFactory
 
 <PageTitle>Settings · Open Print Deploy</PageTitle>
 
@@ -117,7 +118,7 @@
             }
             @if (HttpsState.SelfSigned)
             {
-                <p class="card-text text-muted mb-0">
+                <p class="card-text text-muted mb-1">
                     Self-signed certificate <code>@HttpsState.Thumbprint</code>.
                     Pin this thumbprint on clients (<code>CERTTHUMBPRINT=</code> on the client MSI).
                     @if (HttpsState.Expiry is { } selfExpiry)
@@ -125,6 +126,13 @@
                         <text> Valid until <strong>@selfExpiry.ToString("d")</strong> — pins stay valid until then.</text>
                     }
                 </p>
+                <button class="btn btn-sm btn-outline-danger" @onclick="RegenerateCert" disabled="@_busy">
+                    @(_confirmRegen ? "Yes, remove it — I'll restart + re-pin" : "Regenerate certificate")
+                </button>
+                @if (_certMessage is not null)
+                {
+                    <div class="form-text @(_confirmRegen ? "text-danger" : "text-warning")">@_certMessage</div>
+                }
             }
             else
             {
@@ -167,6 +175,34 @@
     private string? _message;
     private bool _busy;
     private bool _confirmSave;
+    private bool _confirmRegen;
+    private string? _certMessage;
+
+    private void RegenerateCert()
+    {
+        if (!_confirmRegen)
+        {
+            _confirmRegen = true;
+            _certMessage = "This deletes the current certificate. A NEW certificate (with a NEW thumbprint) is "
+                + "generated when you restart the OpenPrintDeployServer service, and every pinned client must be "
+                + "re-pinned with it. Click again to proceed.";
+            return;
+        }
+
+        _confirmRegen = false;
+        if (!OperatingSystem.IsWindows())
+        {
+            _certMessage = "Certificate maintenance is only available on the Windows server.";
+            return;
+        }
+
+        var removed = OpenPrintDeploy.Server.Https.CertificateMaintenance.RemoveSelfSigned(
+            LoggerFactory.CreateLogger("CertificateMaintenance"));
+        _certMessage = removed > 0
+            ? "Certificate removed. Restart the OpenPrintDeployServer service now — a fresh long-lived "
+              + "certificate is generated on startup. Then reload this page for the new thumbprint and re-pin clients."
+            : "No self-signed certificate was found to remove.";
+    }
 
     protected override void OnInitialized()
     {
