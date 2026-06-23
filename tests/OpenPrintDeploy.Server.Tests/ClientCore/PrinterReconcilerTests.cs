@@ -33,6 +33,50 @@ public sealed class PrinterReconcilerTests
     }
 
     [Fact]
+    public void PrinterNameDiffersFromShare_NotReAdded()
+    {
+        // Connected via the share "\\srv\CareersShare"; Windows enumerates the
+        // connection by the server's printer NAME "\\srv\Careers Printer". The
+        // reconciler must treat it as installed and not re-add it every sync.
+        var desired = new SyncResponseDto([new PrinterDto("Careers Printer", @"\\srv\CareersShare")]);
+        var managed = new[] { @"\\srv\CareersShare" };
+        var installed = new[] { @"\\srv\Careers Printer" };
+
+        var plan = PrinterReconciler.Reconcile(desired, managed, installed);
+
+        Assert.Empty(plan.ToAdd);
+        Assert.Empty(plan.ToRemove);
+        Assert.Empty(plan.ToAdopt);
+    }
+
+    [Fact]
+    public void PrinterNameDiffersFromShare_AdoptedWhenUntracked()
+    {
+        // Same name/share split, but OPD doesn't manage it yet — it's present by
+        // its printer-name form, so adopt it (don't re-add) rather than miss it.
+        var desired = new SyncResponseDto([new PrinterDto("Careers Printer", @"\\srv\CareersShare")]);
+        var installed = new[] { @"\\srv\Careers Printer" };
+
+        var plan = PrinterReconciler.Reconcile(desired, [], installed);
+
+        Assert.Empty(plan.ToAdd);
+        Assert.Equal([@"\\srv\CareersShare"], plan.ToAdopt);
+    }
+
+    [Fact]
+    public void PrinterNameMatchingDoesNotResurrectAUserRemovedPrinter()
+    {
+        // Neither the share UNC nor the printer-name form is installed (the user
+        // deleted it), so self-heal still re-adds it.
+        var desired = new SyncResponseDto([new PrinterDto("Careers Printer", @"\\srv\CareersShare")]);
+        var managed = new[] { @"\\srv\CareersShare" };
+
+        var plan = PrinterReconciler.Reconcile(desired, managed, []);
+
+        Assert.Equal([@"\\srv\CareersShare"], plan.ToAdd.Select(p => p.UncPath));
+    }
+
+    [Fact]
     public void AuthoritativeEmptyDesired_RemovesAllManaged()
     {
         // The user legitimately has zero printers (directory reached, no groups):

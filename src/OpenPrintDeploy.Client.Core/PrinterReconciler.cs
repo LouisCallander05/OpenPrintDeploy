@@ -24,6 +24,13 @@ public sealed record ReconcileResult(
 /// UNC comparison is case-insensitive, matching Windows printer connections.
 /// A non-authoritative response (directory/server unavailable) yields an empty
 /// plan — printers are never removed on a state the server couldn't confirm.
+///
+/// "Already installed" is matched on the connection's UNC <em>or</em> on
+/// <c>\\host\&lt;printer name&gt;</c>: you connect to a printer by its SHARE name,
+/// but Windows enumerates the resulting connection by the server's PRINTER name,
+/// and the two differ when an admin named the queue differently from its share.
+/// Without the second form, such a printer never matches what's installed and is
+/// re-added on every sync. The printer name is the DisplayName captured at import.
 /// </summary>
 public static class PrinterReconciler
 {
@@ -53,8 +60,12 @@ public static class PrinterReconciler
         var managed = previouslyManaged.ToHashSet(StringComparer.OrdinalIgnoreCase);
         var installed = currentlyInstalled.ToHashSet(StringComparer.OrdinalIgnoreCase);
 
+        bool IsInstalled(PrinterDto p)
+            => installed.Contains(p.UncPath)
+               || (NameUnc(p) is { } nameUnc && installed.Contains(nameUnc));
+
         var toAdd = desired.Printers
-            .Where(p => !installed.Contains(p.UncPath))
+            .Where(p => !IsInstalled(p))
             .ToList();
 
         var toRemove = managed
@@ -64,11 +75,31 @@ public static class PrinterReconciler
         // Adopt: a desired printer already on the machine that we don't yet
         // track. Claim it without re-adding (it's already installed, so it's not
         // in toAdd) — the reconcile loop then owns it like any other managed
-        // printer. Match by UNC, the connection's true identity.
-        var toAdopt = desiredUncs
-            .Where(unc => installed.Contains(unc) && !managed.Contains(unc))
+        // printer. Recorded by its UNC (the share form we'd reinstall with).
+        var toAdopt = desired.Printers
+            .Where(p => IsInstalled(p) && !managed.Contains(p.UncPath))
+            .Select(p => p.UncPath)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 
         return new ReconcileResult(toAdd, toRemove, toAdopt);
+    }
+
+    /// <summary>
+    /// <c>\\host\&lt;DisplayName&gt;</c> built from a printer's UNC host and its
+    /// display (= server printer) name — the form Windows enumerates a connection
+    /// under. Null when there's no usable host or name.
+    /// </summary>
+    private static string? NameUnc(PrinterDto p)
+    {
+        var name = p.DisplayName?.Trim();
+        if (string.IsNullOrEmpty(name) || !p.UncPath.StartsWith(@"\\", StringComparison.Ordinal))
+        {
+            return null;
+        }
+
+        var rest = p.UncPath[2..];
+        var slash = rest.IndexOf('\\');
+        return slash <= 0 ? null : $@"\\{rest[..slash]}\{name}";
     }
 }
