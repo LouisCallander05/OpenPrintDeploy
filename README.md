@@ -1,7 +1,7 @@
 # OpenPrintDeploy
 
-An open-source alternative to PaperCut Print Deploy. Centralised printer
-deployment for Windows fleets, driven by LDAP/AD group membership and zones.
+Centralised printer deployment for Windows fleets, driven by LDAP/AD group
+membership and zones.
 
 > **Status:** early development. Not yet usable.
 
