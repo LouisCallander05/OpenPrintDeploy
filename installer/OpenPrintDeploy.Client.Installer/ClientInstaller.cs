@@ -3,14 +3,16 @@ using System.IO.Compression;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Win32;
+using OpenPrintDeploy.Client.Core;
 
 namespace OpenPrintDeploy.Client.Installer;
 
 internal static class ClientInstaller
 {
-    private const string TrayExeName  = "OpenPrintDeploy.Client.Tray.exe";
-    private const string RunValueName = "OpenPrintDeployTray";
-    private const string RunKeyPath   = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Run";
+    private const string TrayExeName     = "OpenPrintDeploy.Client.Tray.exe";
+    private const string CleanupExeName  = "OpenPrintDeploy.Client.Cleanup.exe";
+    private const string RunValueName    = "OpenPrintDeployTray";
+    private const string RunKeyPath      = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Run";
 
     // Logical name of the embedded tray folder (zipped). Present only in the
     // released single-file installer; absent in plain dev builds. Kept in sync
@@ -24,7 +26,7 @@ internal static class ClientInstaller
         "OpenPrintDeploy",
         "Tray");
 
-    public static int Install(string? serverUrl)
+    public static int Install(string? serverUrl, bool removeManagedPrintersOnUninstall = true)
     {
         // On install/upgrade we need the running tray (in any user's session) to
         // release file handles on the binaries. Killing all instances and letting
@@ -58,6 +60,9 @@ internal static class ClientInstaller
 
         Log("Registering tray for auto-start at user logon...");
         SetMachineRunKey(installedExe);
+
+        Log($"Recording uninstall printer-removal policy ({(removeManagedPrintersOnUninstall ? "on" : "off")})...");
+        SetRemoveOnUninstallPolicy(removeManagedPrintersOnUninstall);
 
         Log("Starting the tray for the current session...");
         var started = UserSessionLauncher.TryLaunch(installedExe);
@@ -110,10 +115,15 @@ internal static class ClientInstaller
         CopyDirectory(sourceDir, InstallDir);
     }
 
-    public static int Uninstall(bool removeData)
+    public static int Uninstall(bool removeData, bool keepPrinters = false)
     {
         Log("Stopping any running tray instances...");
         KillRunningTray();
+
+        // Gather managed printers for per-user removal BEFORE deleting the files
+        // (the cleanup exe lives in InstallDir and copies itself to ProgramData).
+        // Best-effort: a failure here never blocks the uninstall.
+        GatherManagedPrintersForRemoval(keepPrinters);
 
         Log("Removing logon auto-start Run key...");
         RemoveMachineRunKey();
@@ -223,6 +233,50 @@ internal static class ClientInstaller
     {
         using var key = Registry.LocalMachine.OpenSubKey(RunKeyPath, writable: true);
         key?.DeleteValue(RunValueName, throwOnMissingValue: false);
+    }
+
+    /// <summary>
+    /// Records the uninstall printer-removal policy where the cleanup tool reads
+    /// it (HKLM, same key the MSI writes). "1"/"0" so the two installers agree.
+    /// </summary>
+    private static void SetRemoveOnUninstallPolicy(bool remove)
+    {
+        using var key = Registry.LocalMachine.CreateSubKey(ClientPolicy.RegistrySubKey, writable: true)
+            ?? throw new InvalidOperationException($"Could not open HKLM\\{ClientPolicy.RegistrySubKey}");
+        key.SetValue(ClientPolicy.RemoveOnUninstallValueName, remove ? "1" : "0", RegistryValueKind.String);
+    }
+
+    /// <summary>
+    /// Runs the cleanup tool's SYSTEM gather pass (it builds the per-user removal
+    /// manifest, arms the logon task, and removes the active user's printers). The
+    /// exe sits in InstallDir; pass the policy override so an explicit
+    /// <c>--keep-printers</c> wins over the recorded registry value.
+    /// </summary>
+    private static void GatherManagedPrintersForRemoval(bool keepPrinters)
+    {
+        var cleanupExe = Path.Combine(InstallDir, CleanupExeName);
+        if (!File.Exists(cleanupExe))
+        {
+            Log($"  Note: {CleanupExeName} not found in {InstallDir}; skipping managed-printer removal.");
+            return;
+        }
+
+        var args = keepPrinters ? "--gather --policy off" : "--gather";
+        Log($"Removing OPD-managed printers ({(keepPrinters ? "policy override: keep" : "per policy")})...");
+        try
+        {
+            using var p = Process.Start(new ProcessStartInfo(cleanupExe, args)
+            {
+                UseShellExecute = false,
+                WorkingDirectory = InstallDir,
+            });
+            // Wait so the manifest + ProgramData copy exist before we delete files.
+            p?.WaitForExit(60000);
+        }
+        catch (Exception ex)
+        {
+            Log($"  Note: managed-printer cleanup could not run ({ex.Message}); continuing uninstall.");
+        }
     }
 
     private static void KillRunningTray()

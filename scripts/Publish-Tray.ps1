@@ -113,4 +113,35 @@ if ($wbVer.Major -lt 8) {
            "not the 4.0.0.0 facade from the NETCore.App runtime pack.")
 }
 
+# Bundle the uninstall printer-cleanup tool alongside the tray. It's published as
+# a self-contained single file so the uninstall flow can copy ONE exe to
+# C:\ProgramData and have a per-user logon task run it long after the install
+# directory is gone (no shared runtime to depend on). Both client packagers pick
+# it up: the MSI harvests this folder, the EXE installer zips and embeds it.
+$cleanupTmp = Join-Path $repoRoot "publish/client-cleanup-tmp"
+if (Test-Path $cleanupTmp) { Remove-Item -Recurse -Force $cleanupTmp }
+Push-Location $repoRoot
+try {
+    Write-Host "Publishing uninstall cleanup tool (self-contained single-file $Runtime)..."
+    & dotnet publish installer/OpenPrintDeploy.Client.Cleanup `
+        -c $Configuration `
+        -r $Runtime `
+        --self-contained true `
+        -p:PublishSingleFile=true `
+        -p:IncludeNativeLibrariesForSelfExtract=true `
+        -p:EnableCompressionInSingleFile=true `
+        @versionProps `
+        -o $cleanupTmp
+    if ($LASTEXITCODE -ne 0) { throw "dotnet publish (cleanup) failed (exit $LASTEXITCODE)" }
+}
+finally {
+    Pop-Location
+}
+
+$cleanupExe = Join-Path $cleanupTmp "OpenPrintDeploy.Client.Cleanup.exe"
+if (-not (Test-Path $cleanupExe)) { throw "Cleanup exe missing from its publish folder." }
+Copy-Item -Force -LiteralPath $cleanupExe -Destination (Join-Path $trayDir "OpenPrintDeploy.Client.Cleanup.exe")
+Remove-Item -Recurse -Force $cleanupTmp
+Write-Host "  Bundled OpenPrintDeploy.Client.Cleanup.exe into the tray folder."
+
 Write-Host "Tray published to $trayDir" -ForegroundColor Green

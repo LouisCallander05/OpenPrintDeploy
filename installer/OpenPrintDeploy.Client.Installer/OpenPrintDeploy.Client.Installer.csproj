@@ -22,6 +22,12 @@
     <NuGetAudit>false</NuGetAudit>
   </PropertyGroup>
 
+  <ItemGroup>
+    <!-- Shared policy key names (RemoveManagedPrintersOnUninstall) so the installer
+         and the cleanup tool agree on where the flag lives. -->
+    <ProjectReference Include="..\..\src\OpenPrintDeploy.Client.Core\OpenPrintDeploy.Client.Core.csproj" />
+  </ItemGroup>
+
   <!-- When Publish-Client.ps1 supplies a tray payload zip (a published tray
        folder, zipped), embed it so the installer ships as ONE self-extracting
        exe: download a single file, run it, done. Without it (a plain dev

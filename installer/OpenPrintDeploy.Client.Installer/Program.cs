@@ -32,8 +32,10 @@ internal static class Program
             return Parse(args) switch
             {
                 { Mode: Mode.Help } => PrintHelp(),
-                { Mode: Mode.Uninstall, RemoveData: var removeData } => ClientInstaller.Uninstall(removeData),
-                { Mode: Mode.Install, ServerUrl: var url } => ClientInstaller.Install(url),
+                { Mode: Mode.Uninstall, RemoveData: var removeData, KeepPrinters: var keep }
+                    => ClientInstaller.Uninstall(removeData, keep),
+                { Mode: Mode.Install, ServerUrl: var url, KeepPrinters: var keep }
+                    => ClientInstaller.Install(url, removeManagedPrintersOnUninstall: !keep),
                 _ => PrintHelp(),
             };
         }
@@ -50,13 +52,14 @@ internal static class Program
 
     private enum Mode { Install, Uninstall, Help }
 
-    private readonly record struct Args(Mode Mode, string? ServerUrl, bool RemoveData);
+    private readonly record struct Args(Mode Mode, string? ServerUrl, bool RemoveData, bool KeepPrinters);
 
     private static Args Parse(string[] argv)
     {
         var mode = Mode.Install;
         string? server = null;
         var removeData = false;
+        var keepPrinters = false;
 
         for (var i = 0; i < argv.Length; i++)
         {
@@ -77,6 +80,11 @@ internal static class Program
                 case "--remove-data":
                     removeData = true;
                     break;
+                // On install: don't remove managed printers when later uninstalled.
+                // On uninstall: leave managed printers in place regardless of policy.
+                case "--keep-printers":
+                    keepPrinters = true;
+                    break;
                 case "--server" or "-s":
                     if (i + 1 < argv.Length)
                     {
@@ -94,7 +102,7 @@ internal static class Program
             server = TryDeriveServerFromFileName();
         }
 
-        return new Args(mode, server, removeData);
+        return new Args(mode, server, removeData, keepPrinters);
     }
 
     /// <summary>
@@ -152,9 +160,14 @@ internal static class Program
         Console.WriteLine("                                                Install the tray and configure the server URL (e.g. https://printsrv01:5443).");
         Console.WriteLine("  OpenPrintDeploy.Client.Installer.exe install");
         Console.WriteLine("                                                Install/upgrade keeping the existing server URL.");
+        Console.WriteLine("  OpenPrintDeploy.Client.Installer.exe install --keep-printers");
+        Console.WriteLine("                                                Install but do NOT remove managed printers on a later uninstall.");
         Console.WriteLine("  OpenPrintDeploy.Client.Installer.exe uninstall");
         Console.WriteLine("                                                Stop the tray for all users, remove the Run key and files.");
+        Console.WriteLine("                                                Removes OPD-managed printers per user (unless policy is off).");
         Console.WriteLine("                                                Leaves per-user state (managed-printers.json) in place.");
+        Console.WriteLine("  OpenPrintDeploy.Client.Installer.exe uninstall --keep-printers");
+        Console.WriteLine("                                                Uninstall but leave managed printers in place.");
         Console.WriteLine("  OpenPrintDeploy.Client.Installer.exe uninstall --remove-data");
         Console.WriteLine("                                                Also wipe per-user state on this machine.");
         Console.WriteLine("  OpenPrintDeploy.Client.Installer.exe --help   Show this help.");

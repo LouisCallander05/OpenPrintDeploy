@@ -71,9 +71,16 @@
          live on different print servers. -->
     <Property Id="ALLOWEDSERVERS" Secure="yes" />
 
+    <!-- Whether uninstall removes the printers OPD created. Default ON. Admins
+         override per machine with REMOVEMANAGEDPRINTERS=0 in the install command.
+         Recorded to the registry (below) where the cleanup tool reads it; it's
+         read at uninstall before the value is removed. -->
+    <Property Id="REMOVEMANAGEDPRINTERS" Value="1" Secure="yes" />
+
     <Feature Id="Main" Title="Open Print Deploy Client" Level="1">
       <ComponentGroupRef Id="TrayFiles" />
       <ComponentRef Id="TrayExeComponent" />
+      <ComponentRef Id="CleanupExeComponent" />
       <ComponentRef Id="RemoveExeSettings" />
       <ComponentRef Id="ClientConfig" />
       <ComponentRef Id="AutoStartRunKey" />
@@ -100,17 +107,24 @@
         TerminateProcess="0"
         RebootPrompt="no" />
 
-    <!-- All tray files EXCEPT the exe, which is authored explicitly below so the
-         post-install launch action and the shortcut can reference it by id. -->
+    <!-- All tray files EXCEPT the exes authored explicitly below (so the launch
+         action / shortcut / uninstall action can reference them by id). -->
     <ComponentGroup Id="TrayFiles" Directory="INSTALLFOLDER">
       <Files Include="$(var.HarvestDir)\**">
         <Exclude Files="$(var.HarvestDir)\OpenPrintDeploy.Client.Tray.exe" />
+        <Exclude Files="$(var.HarvestDir)\OpenPrintDeploy.Client.Cleanup.exe" />
       </Files>
     </ComponentGroup>
 
     <DirectoryRef Id="INSTALLFOLDER">
       <Component Id="TrayExeComponent" Bitness="always64">
         <File Id="TrayExe" Source="$(var.HarvestDir)\OpenPrintDeploy.Client.Tray.exe" KeyPath="yes" />
+      </Component>
+
+      <!-- The uninstall printer-cleanup tool, authored explicitly so the deferred
+           uninstall custom action can reference it by id. -->
+      <Component Id="CleanupExeComponent" Bitness="always64">
+        <File Id="CleanupExe" Source="$(var.HarvestDir)\OpenPrintDeploy.Client.Cleanup.exe" KeyPath="yes" />
       </Component>
 
       <!-- Remove any appsettings.json left by a previous EXE installer. The MSI
@@ -137,6 +151,11 @@
                        Name="AllowedPrintServers" Type="string" Value="[ALLOWEDSERVERS]" />
         <RegistryValue Root="HKLM" Key="SOFTWARE\OpenPrintDeploy\Client"
                        Name="InstallerSource" Type="string" Value="[OriginalDatabase]" />
+        <!-- Uninstall printer-removal policy the cleanup tool reads. The gather
+             custom action runs Before RemoveRegistryValues, so this value is
+             still present when the tool reads it. -->
+        <RegistryValue Root="HKLM" Key="SOFTWARE\OpenPrintDeploy\Client"
+                       Name="RemoveManagedPrintersOnUninstall" Type="string" Value="[REMOVEMANAGEDPRINTERS]" />
       </Component>
 
       <!-- Per-machine auto-start: the tray launches for every user at logon. Same
@@ -180,23 +199,30 @@
         Impersonate="no"
         Return="asyncNoWait" />
 
-    <!-- On a true uninstall (NOT a major-upgrade removal), remove the per-user
-         printer connections OPD created before the tray binaries go. Runs as
-         SYSTEM and routes through the same session launcher to clean the console
-         user's printers; runs BEFORE RemoveFiles so the exe still exists, and
-         Return=ignore so a cleanup hiccup can never block the uninstall.
-         Adopted (pre-existing) printers are left untouched by the tray. -->
-    <CustomAction Id="CleanupTraySession"
-        FileRef="TrayExe"
-        ExeCommand="--cleanup-active-session"
+    <!-- Uninstall: gather OPD-managed printers for per-user removal across ALL
+         users (not just the active console user). Runs as SYSTEM (deferred +
+         Impersonate=no). The tool builds a per-SID removal manifest from every
+         profile's managed state, stages a persistent copy of itself to
+         ProgramData, arms a Users AtLogon task to remove each user's printers at
+         next sign-in, and runs an immediate pass for whoever is signed in now.
+         Scheduled Before RemoveRegistryValues so BOTH the cleanup exe (RemoveFiles
+         is later) and the policy registry value are still present when it runs.
+         Return=ignore: a cleanup hiccup must never fail the uninstall. The tool
+         reads the policy from the registry itself, so no CustomActionData is
+         needed.
+         Condition: a real uninstall (REMOVE=ALL) that is NOT a major-upgrade
+         removal (UPGRADINGPRODUCTCODE) — upgrades must keep the user's printers. -->
+    <CustomAction Id="GatherPrinterRemoval"
+        FileRef="CleanupExe"
+        ExeCommand="--gather"
         Execute="deferred"
         Impersonate="no"
         Return="ignore" />
 
     <InstallExecuteSequence>
       <Custom Action="LaunchTraySession" After="WriteRegistryValues" Condition="NOT REMOVE" />
-      <Custom Action="CleanupTraySession" Before="RemoveFiles"
-              Condition="(REMOVE=&quot;ALL&quot;) AND NOT UPGRADINGPRODUCTCODE" />
+      <Custom Action="GatherPrinterRemoval" Before="RemoveRegistryValues"
+              Condition="(REMOVE=&quot;ALL&quot;) AND (NOT UPGRADINGPRODUCTCODE)" />
     </InstallExecuteSequence>
 
   </Package>

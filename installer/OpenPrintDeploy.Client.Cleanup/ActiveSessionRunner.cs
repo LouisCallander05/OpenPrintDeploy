@@ -1,67 +1,72 @@
+using System.ComponentModel;
 using System.Diagnostics;
-using System.IO;
 using System.Runtime.InteropServices;
 using System.Security.Principal;
 
-namespace OpenPrintDeploy.Client.Tray;
+namespace OpenPrintDeploy.Client.Cleanup;
 
 /// <summary>
-/// Launches a fresh tray instance in the interactive user's session. The MSI's
-/// post-install custom action runs the tray exe with <c>--launch-active-session</c>
-/// (as SYSTEM); App.OnStartup routes that here and exits, so the tray itself
-/// becomes the "session launcher" — no separate binary needed.
+/// Runs <c>--remove-user</c> in the interactive user's session right now, so the
+/// person sitting at the machine when it's uninstalled doesn't have to sign out
+/// and back in for their printers to go. The logon task still covers everyone
+/// else (and this same user on later logons — the manifest prune makes that a
+/// no-op).
 ///
-/// Branches like the EXE installer did: as SYSTEM (Intune / the MSI's deferred
-/// action) it grabs the active console session's user token and
-/// <c>CreateProcessAsUser</c> into their session; if there's no user logged in,
-/// it just skips (the Run key starts the tray at next logon). As a non-SYSTEM
-/// elevated process it's already in the user's session, so a plain start works.
-/// Best-effort throughout — failure here never matters; the Run key is the
-/// fallback.
+/// <para>Identity, same branch as the installer's UserSessionLauncher:</para>
+/// <list type="bullet">
+///   <item>SYSTEM (MSI deferred action / Intune): grab the console session's user
+///   token and <c>CreateProcessAsUser</c> into their session, with their
+///   environment block so <c>%LOCALAPPDATA%</c> resolves to their profile.</item>
+///   <item>Elevated admin (EXE installer double-click): we're already in that
+///   user's session, so a plain <see cref="Process.Start(ProcessStartInfo)"/>
+///   runs as them.</item>
+/// </list>
+/// Best-effort throughout — never throws; a failure just defers to the logon task.
 /// </summary>
-internal static class TraySessionLauncher
+internal static class ActiveSessionRunner
 {
-    public static bool LaunchInteractive()
-    {
-        var trayExe = Environment.ProcessPath;
-        if (string.IsNullOrEmpty(trayExe))
-        {
-            return false;
-        }
+    private const string RemoveUserArg = "--remove-user";
 
+    public static void TryRemoveForActiveUser(string exePath)
+    {
         try
         {
             using var identity = WindowsIdentity.GetCurrent();
             if (identity.IsSystem)
             {
-                return TryLaunchInActiveSession(trayExe);
+                TryRunInActiveSession(exePath);
+                return;
             }
 
-            using var process = Process.Start(new ProcessStartInfo(trayExe)
+            // Elevated-admin uninstall: this IS the interactive user's session.
+            using var p = Process.Start(new ProcessStartInfo(exePath, RemoveUserArg)
             {
                 UseShellExecute = false,
-                WorkingDirectory = Path.GetDirectoryName(trayExe)!,
+                WorkingDirectory = Path.GetDirectoryName(exePath)!,
             });
-            return process is not null;
+            CleanupLog.Info(p is not null
+                ? "Launched immediate per-user removal in the current session."
+                : "Could not launch immediate per-user removal; logon task will handle it.");
         }
-        catch
+        catch (Exception ex)
         {
-            // The Run key launches it at next logon regardless.
-            return false;
+            CleanupLog.Warn($"Immediate per-user removal skipped ({ex.Message}); logon task will handle it.");
         }
     }
 
-    private static bool TryLaunchInActiveSession(string trayExe)
+    private static void TryRunInActiveSession(string exePath)
     {
         var sessionId = WTSGetActiveConsoleSessionId();
         if (sessionId == 0xFFFFFFFF)
         {
-            return false; // no one attached to the console (e.g. an ESP install)
+            CleanupLog.Info("No interactive session; logon task will remove printers at next sign-in.");
+            return;
         }
 
         if (!WTSQueryUserToken(sessionId, out var userToken))
         {
-            return false; // no signed-in user on the console session
+            CleanupLog.Info("No signed-in console user; logon task will handle removal at next sign-in.");
+            return;
         }
 
         var envBlock = IntPtr.Zero;
@@ -85,24 +90,28 @@ internal static class TraySessionLauncher
             var ok = CreateProcessAsUser(
                 userToken,
                 lpApplicationName: null,
-                lpCommandLine: $"\"{trayExe}\"",
+                lpCommandLine: $"\"{exePath}\" {RemoveUserArg}",
                 lpProcessAttributes: IntPtr.Zero,
                 lpThreadAttributes: IntPtr.Zero,
                 bInheritHandles: false,
                 dwCreationFlags: flags,
                 lpEnvironment: envBlock,
-                lpCurrentDirectory: Path.GetDirectoryName(trayExe),
+                lpCurrentDirectory: Path.GetDirectoryName(exePath),
                 ref startupInfo,
                 out var processInfo);
 
             if (!ok)
             {
-                return false;
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "CreateProcessAsUser failed");
             }
 
             CloseHandle(processInfo.hThread);
             CloseHandle(processInfo.hProcess);
-            return true;
+            CleanupLog.Info($"Launched immediate per-user removal in console session {sessionId}.");
+        }
+        catch (Exception ex)
+        {
+            CleanupLog.Warn($"Could not launch removal in the active session ({ex.Message}); logon task will handle it.");
         }
         finally
         {
@@ -115,7 +124,7 @@ internal static class TraySessionLauncher
         }
     }
 
-    // ----- P/Invoke (all targets live in System32; pin to block DLL hijacking) -----
+    // ----- P/Invoke (all in System32; pin search path against DLL hijacking) -----
 
     [DllImport("kernel32.dll")]
     [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]

@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <RootNamespace>OpenPrintDeploy.Client.Cleanup</RootNamespace>
+    <AssemblyName>OpenPrintDeploy.Client.Cleanup</AssemblyName>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- Same logo as the rest of the client for a consistent look in Explorer. -->
+    <ApplicationIcon>..\..\src\OpenPrintDeploy.Client.Tray\Assets\appicon.ico</ApplicationIcon>
+
+    <Version Condition="'$(Version)' == ''">0.0.0-dev</Version>
+    <Company>OpenPrintDeploy</Company>
+    <Product>Open Print Deploy Client — Uninstall Cleanup</Product>
+    <AssemblyTitle>Open Print Deploy Client — Uninstall Cleanup</AssemblyTitle>
+    <FileDescription>Removes OPD-managed printers per user on uninstall.</FileDescription>
+    <Copyright>MIT</Copyright>
+
+    <!-- Lets the project compile-check on non-Windows dev/CI; it only runs on
+         Windows. (No WPF here, so the WindowsDesktop runtime-pack overlay the
+         tray needs does not apply.) -->
+    <EnableWindowsTargeting Condition="'$(OS)' != 'Windows_NT'">true</EnableWindowsTargeting>
+
+    <NuGetAudit>false</NuGetAudit>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\OpenPrintDeploy.Client.Core\OpenPrintDeploy.Client.Core.csproj" />
+  </ItemGroup>
+
+</Project>
