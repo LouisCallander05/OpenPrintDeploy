@@ -42,7 +42,9 @@
     <Feature Id="Main" Title="Open Print Deploy Server" Level="1">
       <ComponentGroupRef Id="ServerFiles" />
       <ComponentRef Id="ServerExe" />
+      <ComponentRef Id="OpdIconFile" />
       <ComponentRef Id="AdminShortcut" />
+      <ComponentRef Id="AdminDesktopShortcut" />
     </Feature>
 
     <!-- Install root: C:\Program Files\OpenPrintDeploy. The service's content
@@ -56,6 +58,10 @@
     <StandardDirectory Id="ProgramMenuFolder">
       <Directory Id="AppProgramMenuDir" Name="OpenPrintDeploy" />
     </StandardDirectory>
+
+    <!-- All-users desktop for the admin-UI shortcut (perMachine resolves this
+         to the common desktop, so every operator on the box sees it). -->
+    <StandardDirectory Id="DesktopFolder" />
 
     <!-- Everything in the publish folder EXCEPT the service exe (authored
          explicitly below). Subfolders, including client/, are preserved. -->
@@ -111,6 +117,19 @@
       </Component>
     </DirectoryRef>
 
+    <!-- The OPD logo, installed alongside the server so the .url shortcuts can
+         point their IconFile at a stable on-disk path. The shortcuts below are
+         internet (.url) shortcuts, so they can't embed an icon — they reference
+         this file. Same .ico the ARP entry uses (OpdServerIcon above). -->
+    <DirectoryRef Id="INSTALLFOLDER">
+      <Component Id="OpdIconFile" Bitness="always64">
+        <File Id="OpdIcoFile"
+              Source="..\..\src\OpenPrintDeploy.Client.Tray\Assets\appicon.ico"
+              Name="OpenPrintDeploy.ico"
+              KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
     <!-- Start Menu shortcut to the admin UI. It's a .url internet shortcut
          (the target is a web address, not an exe). localhost is correct because
          the shortcut lives on the server itself, independent of hostname/DNS, and
@@ -125,12 +144,38 @@
             Id="AdminUrlShortcut"
             Name="OpenPrintDeploy Admin"
             Target="https://localhost:5443/"
+            IconFile="[INSTALLFOLDER]OpenPrintDeploy.ico"
+            IconIndex="0"
             Type="url" />
         <RemoveFolder Id="RemoveAppProgramMenuDir" On="uninstall" />
         <RegistryValue
             Root="HKCU"
             Key="Software\OpenPrintDeploy"
             Name="AdminShortcutInstalled"
+            Type="integer"
+            Value="1"
+            KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <!-- Desktop shortcut to the admin UI. Same .url internet shortcut as the
+         Start Menu one above, and same HKCU-keypath requirement: a non-advertised
+         shortcut needs an HKCU registry keypath (ICE43) even though the package
+         is per-machine. No RemoveFolder here — DesktopFolder is a standard
+         directory we don't own, so we must not remove it. -->
+    <DirectoryRef Id="DesktopFolder">
+      <Component Id="AdminDesktopShortcut" Guid="B7A1E6D4-2C93-4F58-A0E1-6D5C8F2B9A37">
+        <util:InternetShortcut
+            Id="AdminUrlDesktopShortcut"
+            Name="OpenPrintDeploy Admin"
+            Target="https://localhost:5443/"
+            IconFile="[INSTALLFOLDER]OpenPrintDeploy.ico"
+            IconIndex="0"
+            Type="url" />
+        <RegistryValue
+            Root="HKCU"
+            Key="Software\OpenPrintDeploy"
+            Name="AdminDesktopShortcutInstalled"
             Type="integer"
             Value="1"
             KeyPath="yes" />
