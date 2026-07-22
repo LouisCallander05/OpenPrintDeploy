@@ -32,16 +32,21 @@ public sealed class SyncCoordinator : IDisposable
     private readonly TrayAuthenticator _auth;
     private readonly ManagedStateStore _state;
     private readonly string _machineName;
+    private readonly string? _clientVersion;
     private readonly IReadOnlyList<string> _allowedPrintServers;
 
     private HttpClient? _http;
     private SyncOrchestrator? _orchestrator;
 
-    public SyncCoordinator(TrayAuthenticator auth, IReadOnlyList<string>? allowedPrintServers = null)
+    public SyncCoordinator(
+        TrayAuthenticator auth,
+        IReadOnlyList<string>? allowedPrintServers = null,
+        string? clientVersion = null)
     {
         _auth = auth;
         _state = new ManagedStateStore();
         _machineName = Environment.MachineName;
+        _clientVersion = clientVersion;
         _allowedPrintServers = allowedPrintServers ?? [];
     }
 
@@ -135,7 +140,7 @@ public sealed class SyncCoordinator : IDisposable
     private async Task<SyncOutcome> SyncWithCurrentClientAsync(CancellationToken ct)
     {
         var managed = _state.Load();
-        var result = await _orchestrator!.SyncOnceAsync(_machineName, managed, ct);
+        var result = await _orchestrator!.SyncOnceAsync(_machineName, managed, ct, _clientVersion);
         _state.Save(result.ManagedPrinters);
         return SyncOutcome.Success(result.ManagedPrinters.Count, result.AddedNames, result.FailedNames);
     }

@@ -3,6 +3,10 @@ using System.Net.Http.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.EntityFrameworkCore;
+using OpenPrintDeploy.Server.Data;
 using OpenPrintDeploy.Shared.Sync;
 using Xunit;
 
@@ -77,6 +81,43 @@ public sealed class SyncEndpointTests : IClassFixture<SyncEndpointTests.TestServ
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
     }
 
+    [Fact]
+    public async Task SyncReport_PersistsClientAndPrinterOutcome()
+    {
+        var client = _factory.CreateClient();
+        var syncId = Guid.NewGuid();
+        var machine = $"REPORT-{Guid.NewGuid():N}";
+        var syncRequest = new HttpRequestMessage(HttpMethod.Post, "/sync")
+        {
+            Content = JsonContent.Create(new SyncRequestDto(machine, syncId, "1.2.3")),
+        };
+        syncRequest.Headers.Add("X-Dev-User", "hruser");
+        var syncResponse = await client.SendAsync(syncRequest);
+        syncResponse.EnsureSuccessStatusCode();
+        var assignment = await syncResponse.Content.ReadFromJsonAsync<SyncResponseDto>();
+        Assert.NotNull(assignment);
+
+        var results = assignment!.Printers
+            .Select(p => new PrinterSyncResultDto(
+                p.DisplayName, p.UncPath, PrinterSyncOperation.Present, Succeeded: true))
+            .ToList();
+        var reportRequest = new HttpRequestMessage(HttpMethod.Post, "/sync/report")
+        {
+            Content = JsonContent.Create(new SyncReportDto(
+                syncId, machine, "1.2.3", SyncReportStatus.Synced, results)),
+        };
+        reportRequest.Headers.Add("X-Dev-User", "hruser");
+        var reportResponse = await client.SendAsync(reportRequest);
+
+        Assert.Equal(HttpStatusCode.NoContent, reportResponse.StatusCode);
+        using var scope = _factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var device = await db.ClientDevices.SingleAsync(d => d.MachineName == machine);
+        var user = await db.ClientUsers.SingleAsync(u => u.DeviceId == device.Id);
+        Assert.Equal("Synced", user.LastSyncStatus);
+        Assert.Equal(results.Count, await db.ClientPrinters.CountAsync(p => p.ClientUserId == user.Id));
+    }
+
     public sealed class TestServerFactory : WebApplicationFactory<Program>
     {
         private readonly string _dbPath =
@@ -84,6 +125,9 @@ public sealed class SyncEndpointTests : IClassFixture<SyncEndpointTests.TestServ
 
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
+            // WindowsServiceLifetime registers Event Log logging on Windows;
+            // TestServer must not require permission to write the machine log.
+            builder.ConfigureLogging(logging => logging.ClearProviders());
             // UseEnvironment("Development") drives both the dev auth handler and
             // the Stub directory (the production code keys those choices off
             // IHostEnvironment, not config). What we still need to set is the

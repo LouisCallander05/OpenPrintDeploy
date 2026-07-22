@@ -19,6 +19,8 @@ is that brain.
   match the user's resolved zone set.
 - **Zones** — admin-defined bundles of printers, gated on AD group, subnet,
   or computer OU. Any combination, any number of rules.
+- **Client activity** — an admin Clients page groups syncs by device and user,
+  showing managed printer health, installation failures, and removal history.
 
 Windows handles driver delivery itself (point-and-print). OpenPrintDeploy
 just tells clients which `\\server\share` UNCs to connect.

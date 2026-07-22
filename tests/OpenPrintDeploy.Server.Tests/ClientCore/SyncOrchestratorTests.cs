@@ -136,6 +136,53 @@ public sealed class SyncOrchestratorTests
         await Assert.ThrowsAsync<HttpRequestException>(() => orchestrator.SyncOnceAsync(null, []));
     }
 
+    [Fact]
+    public async Task SyncOnce_ReportsActualPrinterOutcome()
+    {
+        var syncId = Guid.NewGuid();
+        var handler = new ReportingHandler(new SyncResponseDto(
+            [new PrinterDto("Library", @"\\srv\library")], SyncId: syncId));
+        var api = new SyncApiClient(new HttpClient(handler) { BaseAddress = new Uri("http://localhost") });
+        var orchestrator = new SyncOrchestrator(api, new RecordingApplier());
+
+        var result = await orchestrator.SyncOnceAsync("PC1", [], clientVersion: "1.2.3");
+
+        Assert.Equal(SyncReportStatus.Synced, result.ReportStatus);
+        Assert.NotNull(handler.Report);
+        Assert.Equal(syncId, handler.Report!.SyncId);
+        Assert.Equal("PC1", handler.Report.MachineName);
+        Assert.Equal("1.2.3", handler.Report.ClientVersion);
+        var printer = Assert.Single(handler.Report.Printers);
+        Assert.Equal(PrinterSyncOperation.Installed, printer.Operation);
+        Assert.True(printer.Succeeded);
+    }
+
+    [Fact]
+    public async Task SyncOnce_ReportFailure_DoesNotFailPrinterSync()
+    {
+        var handler = new ReportingHandler(
+            new SyncResponseDto([], SyncId: Guid.NewGuid()),
+            reportStatus: HttpStatusCode.InternalServerError);
+        var api = new SyncApiClient(new HttpClient(handler) { BaseAddress = new Uri("http://localhost") });
+        var orchestrator = new SyncOrchestrator(api, new RecordingApplier());
+
+        var result = await orchestrator.SyncOnceAsync("PC1", []);
+
+        Assert.Equal(SyncReportStatus.Synced, result.ReportStatus);
+    }
+
+    [Fact]
+    public async Task SyncOnce_FailedRemoval_RemainsManagedForRetry()
+    {
+        var api = new SyncApiClient(StubHttpClient(new SyncResponseDto([])));
+        var applier = new RecordingApplier(failRemovalUncs: [@"\\srv\old"]);
+        var orchestrator = new SyncOrchestrator(api, applier);
+
+        var result = await orchestrator.SyncOnceAsync("PC1", [Created(@"\\srv\old")]);
+
+        Assert.Equal(@"\\srv\old", Assert.Single(result.ManagedPrinters).Unc);
+    }
+
     private static HttpClient StubHttpClient(SyncResponseDto response)
     {
         var message = new HttpResponseMessage(HttpStatusCode.OK)
@@ -149,11 +196,16 @@ public sealed class SyncOrchestratorTests
     {
         private readonly IReadOnlyList<string> _installed;
         private readonly HashSet<string> _failUncs;
+        private readonly HashSet<string> _failRemovalUncs;
 
-        public RecordingApplier(IReadOnlyList<string>? installed = null, IEnumerable<string>? failUncs = null)
+        public RecordingApplier(
+            IReadOnlyList<string>? installed = null,
+            IEnumerable<string>? failUncs = null,
+            IEnumerable<string>? failRemovalUncs = null)
         {
             _installed = installed ?? [];
             _failUncs = new HashSet<string>(failUncs ?? [], StringComparer.OrdinalIgnoreCase);
+            _failRemovalUncs = new HashSet<string>(failRemovalUncs ?? [], StringComparer.OrdinalIgnoreCase);
         }
 
         public ReconcileResult? Applied { get; private set; }
@@ -166,7 +218,15 @@ public sealed class SyncOrchestratorTests
                 .Where(p => _failUncs.Contains(p.UncPath))
                 .Select(p => new PrinterApplyError(p, "simulated failure"))
                 .ToList();
-            return Task.FromResult(new ApplyOutcome(added, failed));
+            var removed = plan.ToRemove
+                .Where(unc => !_failRemovalUncs.Contains(unc))
+                .Select(unc => new PrinterRemovalResult(unc))
+                .ToList();
+            var failedRemovals = plan.ToRemove
+                .Where(unc => _failRemovalUncs.Contains(unc))
+                .Select(unc => new PrinterRemovalError(unc, "simulated removal failure"))
+                .ToList();
+            return Task.FromResult(new ApplyOutcome(added, failed, removed, failedRemovals));
         }
 
         public Task<IReadOnlyList<string>> EnumerateInstalledAsync(CancellationToken ct = default)
@@ -187,5 +247,37 @@ public sealed class SyncOrchestratorTests
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
             => throw new HttpRequestException("connection refused");
+    }
+
+    private sealed class ReportingHandler : HttpMessageHandler
+    {
+        private readonly SyncResponseDto _response;
+        private readonly HttpStatusCode _reportStatus;
+
+        public ReportingHandler(
+            SyncResponseDto response,
+            HttpStatusCode reportStatus = HttpStatusCode.NoContent)
+        {
+            _response = response;
+            _reportStatus = reportStatus;
+        }
+
+        public SyncReportDto? Report { get; private set; }
+
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            if (request.RequestUri?.AbsolutePath == "/sync/report")
+            {
+                Report = await request.Content!.ReadFromJsonAsync<SyncReportDto>(cancellationToken);
+                return new HttpResponseMessage(_reportStatus);
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = JsonContent.Create(_response),
+            };
+        }
     }
 }

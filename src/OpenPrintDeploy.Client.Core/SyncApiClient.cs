@@ -19,15 +19,26 @@ public sealed class SyncApiClient
         _http = http;
     }
 
-    public async Task<SyncResponseDto> FetchAsync(string? machineName, CancellationToken ct = default)
+    public async Task<SyncResponseDto> FetchAsync(
+        string? machineName,
+        CancellationToken ct = default,
+        Guid? syncId = null,
+        string? clientVersion = null)
     {
-        using var response = await _http.PostAsJsonAsync("sync", new SyncRequestDto(machineName), ct);
+        using var response = await _http.PostAsJsonAsync(
+            "sync", new SyncRequestDto(machineName, syncId, clientVersion), ct);
         response.EnsureSuccessStatusCode();
         var result = await response.Content.ReadFromJsonAsync<SyncResponseDto>(ct);
         // A 200 with an empty/unparseable body is a server hiccup, not an
         // authoritative "you have no printers" — mark it non-authoritative so the
         // reconciler makes no changes rather than uninstalling everything.
         return result ?? new SyncResponseDto([], Authoritative: false);
+    }
+
+    public async Task ReportAsync(SyncReportDto report, CancellationToken ct = default)
+    {
+        using var response = await _http.PostAsJsonAsync("sync/report", report, ct);
+        response.EnsureSuccessStatusCode();
     }
 
     /// <summary>

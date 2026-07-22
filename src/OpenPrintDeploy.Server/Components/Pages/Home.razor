@@ -3,11 +3,15 @@
 @using System.IO
 @using OpenPrintDeploy.Server.Admin
 @using OpenPrintDeploy.Server.Download
+@using Microsoft.Extensions.Options
+@using OpenPrintDeploy.Server.Sync
 @inject PrinterService Printers
 @inject ZoneService Zones
+@inject ClientActivityAdminService Clients
 @inject IConfiguration Config
 @inject IWebHostEnvironment Env
 @inject OpenPrintDeploy.Server.Https.HttpsStatus HttpsState
+@inject IOptions<ClientActivityOptions> ActivityOptions
 
 <PageTitle>Open Print Deploy — Admin</PageTitle>
 
@@ -22,6 +26,24 @@
                 <h5 class="card-title">@_printerCount</h5>
                 <p class="card-text text-muted mb-2">Printers configured</p>
                 <a class="btn btn-sm btn-outline-primary" href="printers">Manage printers</a>
+            </div>
+        </div>
+    </div>
+    <div class="col-sm-6">
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title">@_onlineClientCount / @_clientCount</h5>
+                <p class="card-text text-muted mb-2">Clients online</p>
+                <a class="btn btn-sm btn-outline-primary" href="clients">View clients</a>
+            </div>
+        </div>
+    </div>
+    <div class="col-sm-6">
+        <div class="card">
+            <div class="card-body">
+                <h5 class="card-title @(_clientAttentionCount > 0 ? "text-danger" : "text-success")">@_clientAttentionCount</h5>
+                <p class="card-text text-muted mb-2">Clients needing attention</p>
+                <a class="btn btn-sm btn-outline-primary" href="clients">Review activity</a>
             </div>
         </div>
     </div>
@@ -76,6 +98,9 @@ Method: String — Equals — @_clientVersion</code></pre>
 @code {
     private int _printerCount;
     private int _zoneCount;
+    private int _clientCount;
+    private int _onlineClientCount;
+    private int _clientAttentionCount;
     private bool _msiAvailable;
     private string _installCommand = "";
     private readonly string _clientVersion = BuildInfo.Version;
@@ -84,6 +109,11 @@ Method: String — Equals — @_clientVersion</code></pre>
     {
         _printerCount = (await Printers.GetAllAsync()).Count;
         _zoneCount = (await Zones.GetAllAsync()).Count;
+        var clients = await Clients.GetDevicesAsync();
+        _clientCount = clients.Count;
+        var onlineWindow = TimeSpan.FromMinutes(Math.Clamp(ActivityOptions.Value.OnlineWindowMinutes, 1, 1440));
+        _onlineClientCount = clients.Count(c => DateTimeOffset.UtcNow - c.LastSeenAt <= onlineWindow);
+        _clientAttentionCount = clients.Count(c => c.Health == "Attention");
 
         _msiAvailable = File.Exists(
             ClientInstallerDownload.ResolveMsiPath(Config, Env.ContentRootPath));

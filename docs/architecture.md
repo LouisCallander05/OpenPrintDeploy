@@ -139,8 +139,25 @@ firewall on 5443 / close 5080.
 
 ## Data model
 
-Printer, Zone, ZoneRule, ZonePrinter, Client, AuditLog. See planning vault
-`01 - Architecture.md` for fields.
+Printer, Zone, ZoneRule, ZonePrinter, ClientDevice, ClientUser, ClientPrinter,
+and ClientActivity.
+
+### Client activity and reporting
+
+`/sync` records the authenticated user, client-reported device name and client
+version, then returns a correlation ID with the assignment. After applying the
+assignment, updated tray clients send a best-effort `/sync/report` containing
+the results already produced by the reconcile pass: installed, already present,
+adopted, removed, already absent, or failed. Reporting never changes the outcome
+of a printer sync and performs no additional printer enumeration.
+
+The admin **Clients** page is device-first because that is how operators locate
+a workstation, then separates users because Windows printer connections are
+per-user. Current client/printer state is updated in place. The append-only
+activity table contains meaningful changes, failures and recoveries rather than
+every unchanged five-minute poll; entries expire after `ClientActivity:RetentionDays`
+(30 days by default). "Online" means seen within
+`ClientActivity:OnlineWindowMinutes` (15 minutes by default).
 
 ### Persistence
 

@@ -15,7 +15,12 @@ namespace OpenPrintDeploy.Shared.Sync;
 /// including connections the client did not install or previously manage.
 /// Null preserves compatibility with servers that predate this field.
 /// </param>
+/// <param name="SyncId">
+/// Correlation ID echoed by reporting-capable servers. Null means the server is
+/// older and the client should skip its best-effort result report.
+/// </param>
 public sealed record SyncResponseDto(
     IReadOnlyList<PrinterDto> Printers,
     bool Authoritative = true,
-    IReadOnlyList<string>? RemovePrinters = null);
+    IReadOnlyList<string>? RemovePrinters = null,
+    Guid? SyncId = null);

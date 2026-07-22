@@ -1,0 +1,165 @@
+@page "/clients"
+@rendermode InteractiveServer
+@attribute [Authorize(Policy = AuthPolicies.Admin)]
+@implements IAsyncDisposable
+@using OpenPrintDeploy.Server.Admin
+@using Microsoft.Extensions.Options
+@using OpenPrintDeploy.Server.Sync
+@inject ClientActivityAdminService ClientService
+@inject IOptions<ClientActivityOptions> ActivityOptions
+
+<PageTitle>Clients · Open Print Deploy</PageTitle>
+
+<div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+    <div>
+        <h1 class="mb-1">Clients</h1>
+        <p class="text-muted mb-0">Devices that have contacted this print deployment server.</p>
+    </div>
+    <button class="btn btn-sm btn-outline-primary" @onclick="LoadAsync" disabled="@_loading">Refresh</button>
+</div>
+
+<div class="row g-3 mb-3">
+    <div class="col-6 col-lg-3">
+        <div class="card h-100"><div class="card-body">
+            <div class="h4 mb-0">@_devices.Count</div><div class="text-muted small">Devices</div>
+        </div></div>
+    </div>
+    <div class="col-6 col-lg-3">
+        <div class="card h-100"><div class="card-body">
+            <div class="h4 mb-0 text-success">@_devices.Count(IsOnline)</div><div class="text-muted small">Online</div>
+        </div></div>
+    </div>
+    <div class="col-6 col-lg-3">
+        <div class="card h-100"><div class="card-body">
+            <div class="h4 mb-0">@_devices.Sum(d => d.PrinterCount)</div><div class="text-muted small">Managed printers</div>
+        </div></div>
+    </div>
+    <div class="col-6 col-lg-3">
+        <div class="card h-100"><div class="card-body">
+            <div class="h4 mb-0 @(_devices.Sum(d => d.FailedPrinterCount) > 0 ? "text-danger" : "text-success")">@_devices.Sum(d => d.FailedPrinterCount)</div>
+            <div class="text-muted small">Printer failures</div>
+        </div></div>
+    </div>
+</div>
+
+<div class="input-group mb-3" style="max-width: 38rem;">
+    <input class="form-control" placeholder="Search device, user, or printer"
+           @bind="_search" @bind:event="oninput" @onkeydown="SearchKeyDown" />
+    <button class="btn btn-outline-primary" @onclick="LoadAsync" disabled="@_loading">Search</button>
+</div>
+
+@if (_loading && _devices.Count == 0)
+{
+    <p class="text-muted">Loading clients…</p>
+}
+else if (_devices.Count == 0)
+{
+    <div class="alert alert-info" style="max-width: 48rem;">
+        No clients have reported yet. Devices will appear after an updated tray client completes its next sync.
+    </div>
+}
+else
+{
+    <div class="table-responsive">
+        <table class="table table-hover align-middle">
+            <thead>
+                <tr>
+                    <th>Status</th><th>Device</th><th>Last user</th><th>Printers</th><th>Client</th><th>Last seen</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var device in _devices)
+                {
+                    <tr>
+                        <td>
+                            <span class="badge @StatusClass(device)">@(IsOnline(device) ? device.Health : "Offline")</span>
+                        </td>
+                        <td>
+                            <a class="fw-semibold text-decoration-none" href="clients/@device.Id">@device.MachineName</a>
+                            @if (device.UserCount > 1)
+                            {
+                                <div class="small text-muted">@device.UserCount users</div>
+                            }
+                        </td>
+                        <td>@(device.LastUsername ?? "—")</td>
+                        <td>
+                            @device.PrinterCount
+                            @if (device.FailedPrinterCount > 0)
+                            {
+                                <span class="text-danger small">(@device.FailedPrinterCount failed)</span>
+                            }
+                        </td>
+                        <td><code>@(device.ClientVersion ?? "unknown")</code></td>
+                        <td title="@device.LastSeenAt.ToLocalTime().ToString("F")">@Ago(device.LastSeenAt)</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+
+@code {
+    private readonly CancellationTokenSource _dispose = new();
+    private IReadOnlyList<ClientDeviceSummary> _devices = [];
+    private string _search = "";
+    private bool _loading;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+        _ = AutoRefreshAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        try { _devices = await ClientService.GetDevicesAsync(_search, _dispose.Token); }
+        catch (OperationCanceledException) when (_dispose.IsCancellationRequested) { }
+        finally { _loading = false; }
+    }
+
+    private async Task AutoRefreshAsync()
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(15));
+        try
+        {
+            while (await timer.WaitForNextTickAsync(_dispose.Token))
+            {
+                await InvokeAsync(LoadAsync);
+            }
+        }
+        catch (OperationCanceledException) when (_dispose.IsCancellationRequested) { }
+    }
+
+    private async Task SearchKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await LoadAsync();
+    }
+
+    private bool IsOnline(ClientDeviceSummary device)
+        => DateTimeOffset.UtcNow - device.LastSeenAt <= TimeSpan.FromMinutes(
+            Math.Clamp(ActivityOptions.Value.OnlineWindowMinutes, 1, 1440));
+
+    private string StatusClass(ClientDeviceSummary device)
+        => !IsOnline(device) ? "text-bg-secondary"
+            : device.Health == "Healthy" ? "text-bg-success"
+            : device.Health == "Syncing" ? "text-bg-primary"
+            : device.Health == "Attention" ? "text-bg-danger"
+            : "text-bg-warning";
+
+    private static string Ago(DateTimeOffset value)
+    {
+        var elapsed = DateTimeOffset.UtcNow - value;
+        if (elapsed < TimeSpan.FromMinutes(1)) return "just now";
+        if (elapsed < TimeSpan.FromHours(1)) return $"{(int)elapsed.TotalMinutes}m ago";
+        if (elapsed < TimeSpan.FromDays(1)) return $"{(int)elapsed.TotalHours}h ago";
+        return $"{(int)elapsed.TotalDays}d ago";
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        _dispose.Cancel();
+        _dispose.Dispose();
+        return ValueTask.CompletedTask;
+    }
+}

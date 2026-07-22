@@ -142,11 +142,16 @@ builder.Services.AddScoped(sp =>
 
 builder.Services.AddScoped<ZoneRepository>();
 builder.Services.AddScoped<SyncHandler>();
+builder.Services.AddScoped<ClientActivityTracker>();
+builder.Services.Configure<ClientActivityOptions>(
+    builder.Configuration.GetSection(ClientActivityOptions.SectionName));
+builder.Services.AddHostedService<ClientActivityRetentionService>();
 
 builder.Services.AddScoped<PrinterService>();
 builder.Services.AddScoped<RemovedPrinterService>();
 builder.Services.AddScoped<ZoneService>();
 builder.Services.AddScoped<SyncDiagnosticsService>();
+builder.Services.AddScoped<ClientActivityAdminService>();
 
 // Spooler discovery (admin "Import from spooler"). WMI on Windows; an empty
 // fallback elsewhere so dev runs on Linux/macOS still render the import panel.
@@ -215,6 +220,15 @@ builder.Services.AddRateLimiter(options =>
                 Window = TimeSpan.FromMinutes(1),
                 QueueLimit = 0,
             }));
+    options.AddPolicy("sync-report", context =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: context.User.Identity?.Name ?? context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 12,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0,
+            }));
 });
 
 var app = builder.Build();
@@ -268,6 +282,7 @@ var syncPolicy = new AuthorizationPolicyBuilder(clientScheme)
 app.MapPost("/sync", async (
     SyncRequestDto request,
     SyncHandler handler,
+    ClientActivityTracker activity,
     HttpContext http,
     CancellationToken ct) =>
 {
@@ -276,12 +291,55 @@ app.MapPost("/sync", async (
         return Results.Unauthorized();
     }
 
-    var response = await handler.HandleAsync(http.User, request.MachineName, ct);
+    if (request.MachineName?.Length > 128 || request.ClientVersion?.Length > 64)
+    {
+        return Results.BadRequest();
+    }
+
+    var syncId = request.SyncId ?? Guid.NewGuid();
+    var response = (await handler.HandleAsync(http.User, request.MachineName, ct)) with { SyncId = syncId };
+    await activity.RecordSyncStartedAsync(http.User.Identity?.Name ?? "(unknown)", request, response, ct);
     return Results.Ok(response);
 })
 .RequireAuthorization(syncPolicy)
 .RequireRateLimiting("sync")
 .WithMetadata(new RequestSizeLimitAttribute(1024)) // SyncRequestDto is ~50 bytes; 1 KB is plenty
+.DisableAntiforgery();
+
+app.MapPost("/sync/report", async (
+    SyncReportDto report,
+    ClientActivityTracker activity,
+    HttpContext http,
+    CancellationToken ct) =>
+{
+    if (http.User.Identity?.IsAuthenticated != true)
+    {
+        return Results.Unauthorized();
+    }
+
+    if (report.SyncId == Guid.Empty
+        || report.MachineName?.Length > 128
+        || report.ClientVersion?.Length > 64
+        || report.Error?.Length > 4096
+        || report.Printers is null
+        || report.Printers.Count > 256
+        || !Enum.IsDefined(report.Status)
+        || report.Printers.Any(p => string.IsNullOrWhiteSpace(p.UncPath)
+                                    || p.UncPath.Length > 260
+                                    || p.DisplayName?.Length > 128
+                                    || p.Error?.Length > 4096
+                                    || !Enum.IsDefined(p.Operation)
+                                    || !Enum.IsDefined(p.RemovalReason)))
+    {
+        return Results.BadRequest();
+    }
+
+    await activity.RecordReportAsync(http.User.Identity?.Name ?? "(unknown)", report, ct);
+    return Results.NoContent();
+})
+.RequireAuthorization(syncPolicy)
+.RequireRateLimiting("sync-report")
+.WithMetadata(new RequestSizeLimitAttribute(64 * 1024))
 .DisableAntiforgery();
 
 
