@@ -3,8 +3,7 @@
 Publishes the Tray as a self-contained win-x64 folder, ready to package.
 
 .DESCRIPTION
-Shared by both client packagers: Publish-Client.ps1 (zips + embeds it into the
-single-file EXE installer) and Publish-Client-Msi.ps1 (harvests it into the MSI).
+Used by Publish-Client-Msi.ps1, which harvests this folder into the client MSI.
 Includes the WindowsDesktop runtime-pack overlay that fixes the self-contained
 WPF publish (see the inline notes), so any consumer gets a tray folder that
 actually launches on a clean endpoint.
@@ -116,8 +115,7 @@ if ($wbVer.Major -lt 8) {
 # Bundle the uninstall printer-cleanup tool alongside the tray. It's published as
 # a self-contained single file so the uninstall flow can copy ONE exe to
 # C:\ProgramData and have a per-user logon task run it long after the install
-# directory is gone (no shared runtime to depend on). Both client packagers pick
-# it up: the MSI harvests this folder, the EXE installer zips and embeds it.
+# directory is gone (no shared runtime to depend on). The MSI harvests this folder.
 $cleanupTmp = Join-Path $repoRoot "publish/client-cleanup-tmp"
 if (Test-Path $cleanupTmp) { Remove-Item -Recurse -Force $cleanupTmp }
 Push-Location $repoRoot

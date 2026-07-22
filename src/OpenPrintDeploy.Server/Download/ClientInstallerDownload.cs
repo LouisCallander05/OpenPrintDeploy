@@ -4,11 +4,10 @@ using OpenPrintDeploy.Shared;
 namespace OpenPrintDeploy.Server.Download;
 
 /// <summary>
-/// Locates the bundled tray-client installer and works out the download
-/// filename so the file an admin saves is <c>OpenPrintDeploy - &lt;host&gt;.exe</c>.
-/// The installer reads that host out of its own filename and configures itself
-/// to talk to this server — zero arguments, Intune-friendly. Publish-Server.ps1
-/// drops the single-file installer under <c>client/</c> next to the server exe.
+/// Locates the bundled tray-client MSI and works out its pre-configured download
+/// filename. The MSI records that filename during installation, allowing the tray
+/// to discover this server's host and optional certificate pin. Publish-Server.ps1
+/// places the MSI under <c>client/</c> next to the server executable.
 /// </summary>
 public static class ClientInstallerDownload
 {

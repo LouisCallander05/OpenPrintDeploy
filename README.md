@@ -40,7 +40,8 @@ src/
   OpenPrintDeploy.Client.Tray     # WPF tray app — user session, applies printers
 installer/
   OpenPrintDeploy.Server.Msi      # WiX per-machine MSI for the server
-  OpenPrintDeploy.Client.Installer # Per-machine installer for the tray (Intune-deployable)
+  OpenPrintDeploy.Client.Msi      # WiX per-machine MSI for the tray client
+  OpenPrintDeploy.Client.Cleanup  # MSI uninstall helper
 docs/
 OpenPrintDeploy.sln
 ```
@@ -132,41 +133,31 @@ you want a clean wipe.
 
 ## Endpoints: the tray client
 
-The client ships as a **single self-extracting installer exe** — one file that
-carries the tray (and its runtime) inside it. The tray is per-machine installed
+The client ships only as a **per-machine MSI**. The tray and its runtime are
+contained inside that MSI. The tray is installed for the machine
 and auto-starts in every user's session via an `HKLM\…\Run` key; it
 authenticates to the server as the signed-in user via Kerberos, calls `/sync`,
 and applies the resolved printers to the user's per-user (HKCU) connection list.
 
 **Download it straight from the server.** On the admin dashboard, click
-**Download client installer** (or `GET /download/client`). The server hands back
-the installer already named for itself — `OpenPrintDeploy - <host>.exe` — so the
-file is pre-configured for that server with nothing to type. (The tag-push
-release also publishes the bare installer as `OpenPrintDeploy-client-win-x64.zip`.)
-
-Install on a single workstation — any of:
-
-> **Current path is the MSI from the dashboard**, not the exe below — see
-> *Intune deployment*. The MSI auto-pins the server's certificate and uses
-> HTTPS:5443; the exe flow is retained for reference.
+**Download client MSI** (or `GET /download/client-msi`). The server returns an
+MSI named for its host and, when needed, its self-signed certificate thumbprint.
+A manual double-click therefore installs a correctly targeted client without
+extra properties. The client MSI is not published as a separate GitHub release
+asset; the installed server is its distribution point.
 
 ```cmd
-:: 1. Just run the downloaded "OpenPrintDeploy - <host>.exe" (double-click -> UAC).
-::    It reads <host> from its own filename and configures https://<host>:5443.
+:: Install a dashboard download manually
+msiexec /i "OpenPrintDeploy - printsrv01.corp.local.msi"
 
-:: 2. Or pass the server explicitly (overrides the filename):
-OpenPrintDeploy.Client.Installer.exe install --server https://printsrv01.corp.local:5443
+:: Uninstall
+msiexec /x "OpenPrintDeploy.Client.msi"
 ```
 
-**Filename-based config:** a file named `OpenPrintDeploy - <host>.exe` configures
-`https://<host>:5443`. Filenames can't carry a scheme or port, so `https` and port
-`5443` are applied automatically; pass `--server` to override. This is the path
-for non-technical deployers and for Intune — name once, run anywhere.
-
-The installer extracts binaries to `C:\Program Files\OpenPrintDeploy\Tray\`,
-writes `appsettings.json` with the server URL, and registers the Run-key
-auto-start. The tray will launch at next user logon; right-click its system
-tray icon to see "Sync now", "Sign in…", the configured server, and the version.
+The MSI installs the tray under `C:\Program Files\OpenPrintDeploy\Tray\`, stores
+its configuration in the machine registry, and registers Run-key auto-start.
+The tray launches at next user logon; right-click its system-tray icon to see
+"Sync now", "Sign in…", the configured server, and the version.
 
 ### Non-domain-joined machines (sign in with a domain account)
 
@@ -186,47 +177,31 @@ target `OpenPrintDeploy:<server-host>`), so the prompt appears only once until
 the password changes. No server configuration is required — the server's
 existing Negotiate authentication already accepts these credentials.
 
-To uninstall:
-
-```cmd
-OpenPrintDeploy.Client.Installer.exe uninstall                :: leaves per-user state
-OpenPrintDeploy.Client.Installer.exe uninstall --remove-data  :: wipes installer's user state too
-```
-
 ### Intune deployment
 
-For fleet rollout, download the pre-named installer from the server (or grab the
-release exe), drop that one file in a folder, and wrap it with Microsoft's
-[IntuneWinAppUtil][intunewin] as a Win32 app:
+For fleet rollout, download the client MSI from the server admin page, rename it
+to `OpenPrintDeploy.Client.msi`, place it alone in a source folder, and wrap it
+with Microsoft's [IntuneWinAppUtil][intunewin] as a Win32 app:
 
 ```cmd
-IntuneWinAppUtil.exe -c <folder-with-the-exe> -s "OpenPrintDeploy - printsrv01.corp.local.exe" -o <out>
+IntuneWinAppUtil.exe -c <folder-with-the-msi> -s "OpenPrintDeploy.Client.msi" -o <out>
 ```
 
-Intune install command — if you used the server's pre-named download, the
-filename already carries the server, so just run it:
+Use explicit MSI properties for a stable Intune command. The admin page shows
+the correct command for the current server:
 
 ```
-"OpenPrintDeploy - printsrv01.corp.local.exe" install
-```
-
-Or, with the bare installer, pass the server explicitly:
-
-```
-OpenPrintDeploy.Client.Installer.exe install --server https://printsrv01.corp.local:5443
+msiexec /i "OpenPrintDeploy.Client.msi" SERVER="https://printsrv01.corp.local:5443" CERTTHUMBPRINT="AB12…" /qn
 ```
 
 Intune uninstall command:
 
 ```
-OpenPrintDeploy.Client.Installer.exe uninstall
+msiexec /x "{PRODUCT-CODE-FROM-MSI}" /qn
 ```
 
-Suggested detection rule (Registry):
-
-- Key: `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run`
-- Value: `OpenPrintDeployTray`
-- Detection: value exists.
+Intune can derive the uninstall command and MSI product-code detection rule
+from the wrapped MSI automatically.
 
 [intunewin]: https://github.com/Microsoft/Microsoft-Win32-Content-Prep-Tool
 

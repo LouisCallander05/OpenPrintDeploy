@@ -51,7 +51,7 @@ $repoRoot   = Split-Path -Parent $PSScriptRoot
 $trayDir    = Join-Path $repoRoot "publish/client-tray"
 $msiVersion = Get-MsiVersion $Version
 
-# Publish the self-contained tray (shared with the EXE packager).
+# Publish the self-contained tray for the MSI payload.
 & (Join-Path $PSScriptRoot "Publish-Tray.ps1") `
     -OutDir $trayDir -Configuration $Configuration -Runtime $Runtime -Version $Version
 if ($LASTEXITCODE -ne 0) { throw "Publish-Tray.ps1 failed (exit $LASTEXITCODE)" }

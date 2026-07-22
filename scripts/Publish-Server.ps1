@@ -4,8 +4,8 @@ Builds the OpenPrintDeploy server MSI for the print server.
 
 .DESCRIPTION
 Publishes the server as a self-contained win-x64 folder, bundles the tray-client
-installer under client/ so the server can hand it out at /download/client, then
-builds a per-machine MSI from that folder with the WiX Toolset. The result is a
+MSI under client/ so the admin page can hand it out at /download/client-msi,
+then builds a per-machine MSI from that folder with the WiX Toolset. The result is a
 single file:
 
     publish/OpenPrintDeploy.Server.msi
@@ -84,25 +84,13 @@ finally {
     Pop-Location
 }
 
-# Bundle the single-file tray-client installer under client/ so admins can
-# download it straight from the server UI (GET /download/client), pre-named for
-# this host. Built fresh here so it always matches this release — and it must
-# land in the payload BEFORE the MSI is built so WiX harvests it.
-$clientTmp = Join-Path $repoRoot "publish/server-client-tmp"
-if (Test-Path $clientTmp) { Remove-Item -Recurse -Force $clientTmp }
-Write-Host "Building tray-client installer to bundle for download..."
-& (Join-Path $PSScriptRoot "Publish-Client.ps1") `
-    -Configuration $Configuration -Runtime $Runtime -OutDir $clientTmp -Version $Version
-$clientSrc = Join-Path $clientTmp "OpenPrintDeploy.Client.Installer.exe"
-if (-not (Test-Path $clientSrc)) { throw "Client installer exe missing after Publish-Client.ps1." }
+# Bundle only the client MSI so admins can download it from the server UI.
+# It must land in the payload before the server MSI is built so WiX harvests it.
 $clientDest = Join-Path $resolvedOut "client"
 New-Item -ItemType Directory -Force -Path $clientDest | Out-Null
-Copy-Item -Path $clientSrc -Destination $clientDest -Force
-Remove-Item -Recurse -Force $clientTmp
 
-# Also bundle the client MSI (for Intune) so the server serves it pre-named at
-# /download/client-msi. Lands in publish/OpenPrintDeploy.Client.msi (also a
-# release asset) and is copied into the payload before WiX harvests it.
+# The intermediate publish/OpenPrintDeploy.Client.msi is deliberately not a
+# GitHub release asset; the installed server is its distribution point.
 Write-Host "Building tray-client MSI to bundle for download..."
 & (Join-Path $PSScriptRoot "Publish-Client-Msi.ps1") `
     -Configuration $Configuration -Runtime $Runtime -Version $Version -SignThumbprint $SignThumbprint
@@ -151,5 +139,5 @@ Write-Host "  1. Copy OpenPrintDeploy.Server.msi to the print server."
 Write-Host "  2. Double-click it (UAC elevates), or: msiexec /i OpenPrintDeploy.Server.msi /quiet"
 Write-Host "  3. Open the admin UI from the Start Menu (OpenPrintDeploy > OpenPrintDeploy Admin),"
 Write-Host "     or browse to https://localhost:5443/."
-Write-Host "  4. Admins can then download the tray client from the dashboard"
-Write-Host "     (or GET /download/client) pre-named for this server."
+Write-Host "  4. Admins can then download the client MSI from the dashboard"
+Write-Host "     (or GET /download/client-msi) pre-configured for this server."
