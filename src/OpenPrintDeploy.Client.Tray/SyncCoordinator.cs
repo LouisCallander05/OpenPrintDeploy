@@ -23,8 +23,9 @@ public readonly record struct SyncOutcome(
 /// authentication (signed-in user vs explicit domain credentials) is decided by
 /// <see cref="TrayAuthenticator"/>. Failures are caught and returned, never
 /// thrown, so the caller can notify the user and keep installed printers in
-/// place when the server or a domain controller is unreachable. A 401 triggers a
-/// one-shot re-auth with explicit domain credentials.
+/// place when the server or a domain controller is unreachable. A 401 from an
+/// integrated client triggers one silent renegotiation; dialogs are reserved for
+/// the explicit "Sign in…" tray action.
 /// </summary>
 public sealed class SyncCoordinator : IDisposable
 {
@@ -57,19 +58,26 @@ public sealed class SyncCoordinator : IDisposable
         }
         catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.Unauthorized)
         {
-            // Integrated auth (or the stored credentials) was rejected. Offer a
-            // sign-in and retry once with explicit domain credentials.
-            var refreshed = _auth.ReAuthenticate(
-                "The server rejected the current credentials. Enter a domain account.");
-            if (refreshed is null)
+            if (!_auth.CurrentClientUsesIntegratedAuth)
             {
-                return SyncOutcome.Failure("Sign-in required — the server rejected the current credentials.");
+                return SyncOutcome.Failure(
+                    "The server rejected the saved credentials. Open the tray menu and choose “Sign in…” to update them.");
             }
 
-            SwapClient(refreshed);
+            // Entra/domain Windows credentials can occasionally be rejected
+            // while the OS refreshes its token. Dispose the challenged handler,
+            // pause briefly, and let Windows negotiate a fresh session. Never
+            // replace an integrated identity with a surprise password prompt.
+            await Task.Delay(TimeSpan.FromSeconds(2), ct);
+            SwapClient(_auth.CreateIntegratedClient());
             try
             {
                 return await SyncWithCurrentClientAsync(ct);
+            }
+            catch (HttpRequestException retryEx) when (retryEx.StatusCode == HttpStatusCode.Unauthorized)
+            {
+                return SyncOutcome.Failure(
+                    "Windows integrated authentication was temporarily rejected. The client will retry automatically.");
             }
             catch (Exception retryEx) when (retryEx is not OperationCanceledException)
             {

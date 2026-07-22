@@ -103,6 +103,19 @@ public sealed class SyncHandlerTests : IAsyncDisposable
         Assert.True(response.Authoritative);
     }
 
+    [Fact]
+    public async Task Handle_ReturnsGlobalPrinterRemovals()
+    {
+        const string retired = @"\\oldserver\retired";
+        _db.RemovedPrinters.Add(new RemovedPrinterEntity { UncPath = retired });
+        await _db.SaveChangesAsync();
+        var handler = NewHandler(new FakeDirectory());
+
+        var response = await handler.HandleAsync(Principal(@"EDU002\student"), null, default);
+
+        Assert.Contains(retired, response.RemovePrinters!);
+    }
+
     private SyncHandler NewHandler(IDirectoryService directory)
     {
         var db = NewContext();

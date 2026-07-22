@@ -44,6 +44,28 @@ namespace OpenPrintDeploy.Server.Data.Migrations
                     b.ToTable("Printers");
                 });
 
+            modelBuilder.Entity("OpenPrintDeploy.Server.Data.Entities.RemovedPrinterEntity", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("UncPath")
+                        .IsRequired()
+                        .HasMaxLength(260)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UncPath")
+                        .IsUnique();
+
+                    b.ToTable("RemovedPrinters");
+                });
+
             modelBuilder.Entity("OpenPrintDeploy.Server.Data.Entities.ZoneEntity", b =>
                 {
                     b.Property<Guid>("Id")

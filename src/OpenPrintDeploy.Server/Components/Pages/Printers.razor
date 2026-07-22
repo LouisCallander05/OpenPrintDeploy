@@ -5,6 +5,7 @@
 @using OpenPrintDeploy.Server.Data.Entities
 @using OpenPrintDeploy.Server.Spooler
 @inject PrinterService PrinterService
+@inject RemovedPrinterService RemovedPrinterService
 @inject IPrintSpoolerService Spooler
 
 <PageTitle>Printers · Open Print Deploy</PageTitle>
@@ -18,6 +19,69 @@
             <button class="btn btn-primary" @onclick="StartCreate">Add printer</button>
         </div>
     }
+</div>
+
+<div class="card mb-4 border-danger-subtle">
+    <div class="card-body">
+        <div class="d-flex justify-content-between align-items-start mb-3">
+            <div>
+                <h5 class="card-title mb-1">Remove printers</h5>
+                <p class="text-muted mb-0">
+                    Every client removes these printer connections on its next sync, even if another tool installed them.
+                </p>
+            </div>
+            @if (!_showRemoveForm)
+            {
+                <button class="btn btn-outline-danger" @onclick="StartRemovePrinter">Add removal</button>
+            }
+        </div>
+
+        @if (_removeError is not null)
+        {
+            <div class="alert alert-danger" role="alert">@_removeError</div>
+        }
+
+        @if (_showRemoveForm)
+        {
+            <EditForm Model="_removeModel" OnValidSubmit="SaveRemovalAsync" class="mb-3">
+                <DataAnnotationsValidator />
+                <div class="input-group">
+                    <InputText class="form-control" @bind-Value="_removeModel.UncPath"
+                               placeholder="\\printsrv01\Retired-Queue" aria-label="Printer UNC path" />
+                    <button type="submit" class="btn btn-danger" disabled="@_savingRemoval">Remove on clients</button>
+                    <button type="button" class="btn btn-outline-secondary" @onclick="CancelRemoval">Cancel</button>
+                </div>
+                <ValidationMessage For="() => _removeModel.UncPath" class="text-danger small" />
+            </EditForm>
+        }
+
+        @if (_removedPrinters is null)
+        {
+            <p class="text-muted mb-0">Loading…</p>
+        }
+        else if (_removedPrinters.Count == 0)
+        {
+            <p class="text-muted mb-0">No printer removals configured.</p>
+        }
+        else
+        {
+            <table class="table table-sm align-middle mb-0">
+                <thead><tr><th>UNC path</th><th class="text-end">Action</th></tr></thead>
+                <tbody>
+                    @foreach (var printer in _removedPrinters)
+                    {
+                        <tr>
+                            <td><code>@printer.UncPath</code></td>
+                            <td class="text-end">
+                                <button class="btn btn-sm btn-outline-secondary"
+                                        @onclick="() => StopRemovalAsync(printer.Id)">Stop removing</button>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </div>
 </div>
 
 @if (_error is not null)
@@ -167,12 +231,17 @@ else
 
 @code {
     private IReadOnlyList<PrinterEntity>? _printers;
+    private IReadOnlyList<RemovedPrinterEntity>? _removedPrinters;
     private PrinterInput _model = new();
     private Guid? _editingId;
     private Guid? _deletingId;
     private bool _showForm;
     private bool _saving;
     private string? _error;
+    private RemovedPrinterInput _removeModel = new();
+    private bool _showRemoveForm;
+    private bool _savingRemoval;
+    private string? _removeError;
 
     private bool _importing;
     private bool _importBusy;
@@ -190,7 +259,50 @@ else
 
     protected override async Task OnInitializedAsync() => await ReloadAsync();
 
-    private async Task ReloadAsync() => _printers = await PrinterService.GetAllAsync();
+    private async Task ReloadAsync()
+    {
+        _printers = await PrinterService.GetAllAsync();
+        _removedPrinters = await RemovedPrinterService.GetAllAsync();
+    }
+
+    private void StartRemovePrinter()
+    {
+        _removeError = null;
+        _removeModel = new RemovedPrinterInput();
+        _showRemoveForm = true;
+    }
+
+    private void CancelRemoval()
+    {
+        _showRemoveForm = false;
+        _removeError = null;
+    }
+
+    private async Task SaveRemovalAsync()
+    {
+        _savingRemoval = true;
+        _removeError = null;
+        try
+        {
+            await RemovedPrinterService.CreateAsync(_removeModel);
+            _showRemoveForm = false;
+            await ReloadAsync();
+        }
+        catch (AdminValidationException ex)
+        {
+            _removeError = ex.Message;
+        }
+        finally
+        {
+            _savingRemoval = false;
+        }
+    }
+
+    private async Task StopRemovalAsync(Guid id)
+    {
+        await RemovedPrinterService.DeleteAsync(id);
+        await ReloadAsync();
+    }
 
     private void StartCreate()
     {

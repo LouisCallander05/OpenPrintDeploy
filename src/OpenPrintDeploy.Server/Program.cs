@@ -144,6 +144,7 @@ builder.Services.AddScoped<ZoneRepository>();
 builder.Services.AddScoped<SyncHandler>();
 
 builder.Services.AddScoped<PrinterService>();
+builder.Services.AddScoped<RemovedPrinterService>();
 builder.Services.AddScoped<ZoneService>();
 builder.Services.AddScoped<SyncDiagnosticsService>();
 

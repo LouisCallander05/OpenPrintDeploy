@@ -79,6 +79,12 @@ public sealed class PrinterService
         AppDbContext db, string uncPath, Guid? excludingId, CancellationToken ct)
     {
         var trimmed = uncPath.Trim();
+        var normalized = trimmed.ToUpper();
+        if (await db.RemovedPrinters.AnyAsync(p => p.UncPath.ToUpper() == normalized, ct))
+        {
+            throw new AdminValidationException(
+                $"'{trimmed}' is configured for removal. Remove it from the removal list first.");
+        }
         var clash = await db.Printers
             .AnyAsync(p => p.UncPath == trimmed && (excludingId == null || p.Id != excludingId), ct);
         if (clash)

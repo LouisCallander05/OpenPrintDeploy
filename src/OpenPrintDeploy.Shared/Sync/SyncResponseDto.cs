@@ -10,4 +10,12 @@ namespace OpenPrintDeploy.Shared.Sync;
 /// true so a normal response needs no extra ceremony; an empty body that fails
 /// to deserialize is treated as non-authoritative by the client.
 /// </param>
-public sealed record SyncResponseDto(IReadOnlyList<PrinterDto> Printers, bool Authoritative = true);
+/// <param name="RemovePrinters">
+/// UNC connections the server explicitly requires every client to remove,
+/// including connections the client did not install or previously manage.
+/// Null preserves compatibility with servers that predate this field.
+/// </param>
+public sealed record SyncResponseDto(
+    IReadOnlyList<PrinterDto> Printers,
+    bool Authoritative = true,
+    IReadOnlyList<string>? RemovePrinters = null);

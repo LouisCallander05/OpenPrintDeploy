@@ -105,6 +105,31 @@ public sealed class PrinterReconcilerTests
     }
 
     [Fact]
+    public void ForcedRemoval_RemovesPrinterThatWasNotManaged()
+    {
+        var desired = new SyncResponseDto(
+            [], RemovePrinters: [@"\\oldserver\retired"]);
+
+        var plan = PrinterReconciler.Reconcile(
+            desired, [], [@"\\oldserver\retired"]);
+
+        Assert.Equal([@"\\oldserver\retired"], plan.ToRemove);
+    }
+
+    [Fact]
+    public void ForcedRemoval_StillAppliesWhenDirectoryResolutionIsUnavailable()
+    {
+        var desired = new SyncResponseDto(
+            [], Authoritative: false, RemovePrinters: [@"\\oldserver\retired"]);
+
+        var plan = PrinterReconciler.Reconcile(desired, [@"\\srv\keep"], []);
+
+        Assert.Empty(plan.ToAdd);
+        Assert.Equal([@"\\oldserver\retired"], plan.ToRemove);
+        Assert.Empty(plan.ToAdopt);
+    }
+
+    [Fact]
     public void NonAuthoritative_DoesNotAddOrRemove_EvenWithPrinters()
     {
         // Defensive: a non-authoritative response is ignored wholesale, even if it

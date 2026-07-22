@@ -58,8 +58,8 @@ public partial class App : Application
 
         ClientLog.Info($"Server: {settings.ServerBaseAddress}");
 
-        // The prompt must run on the UI (STA) thread; the authenticator may call
-        // it from a background continuation during a sync, so marshal explicitly.
+        // The prompt is only opened by the explicit tray-menu action and must run
+        // on the UI (STA) thread, so marshal explicitly.
         _authenticator = new TrayAuthenticator(
             settings.ServerBaseAddress,
             ctx => Dispatcher.Invoke(() => CredentialPrompt.Show(ctx)),

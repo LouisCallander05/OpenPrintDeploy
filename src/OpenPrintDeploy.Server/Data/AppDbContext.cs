@@ -10,6 +10,7 @@ public sealed class AppDbContext : DbContext
     }
 
     public DbSet<PrinterEntity> Printers => Set<PrinterEntity>();
+    public DbSet<RemovedPrinterEntity> RemovedPrinters => Set<RemovedPrinterEntity>();
     public DbSet<ZoneEntity> Zones => Set<ZoneEntity>();
     public DbSet<ZoneRuleEntity> ZoneRules => Set<ZoneRuleEntity>();
 
@@ -20,6 +21,11 @@ public sealed class AppDbContext : DbContext
         printer.Property(p => p.UncPath).HasMaxLength(260).IsRequired();
         printer.Property(p => p.DisplayName).HasMaxLength(128).IsRequired();
         printer.HasIndex(p => p.UncPath).IsUnique();
+
+        var removedPrinter = modelBuilder.Entity<RemovedPrinterEntity>();
+        removedPrinter.HasKey(p => p.Id);
+        removedPrinter.Property(p => p.UncPath).HasMaxLength(260).IsRequired();
+        removedPrinter.HasIndex(p => p.UncPath).IsUnique();
 
         var zone = modelBuilder.Entity<ZoneEntity>();
         zone.HasKey(z => z.Id);

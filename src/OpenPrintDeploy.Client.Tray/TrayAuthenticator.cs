@@ -24,11 +24,11 @@ public readonly record struct AuthStatus(bool Integrated, string? User)
 /// <list type="bullet">
 ///   <item>Domain- or Entra-joined → the signed-in user's Windows identity
 ///   (Integrated Auth), exactly as before.</item>
-///   <item>Standalone (workgroup) machine → explicit domain credentials, taken
-///   from the Windows Credential Manager or, the first time, a sign-in prompt.</item>
+///   <item>Standalone (workgroup) machine → explicit domain credentials from
+///   Windows Credential Manager, populated by the manual "Sign in…" action.</item>
 /// </list>
-/// The same explicit-credentials path is reused when integrated auth is rejected
-/// (a 401), so a misjudged join state still recovers.
+/// Interactive credential collection only happens from the explicit tray-menu
+/// action. Background sync must never interrupt the user with a modal dialog.
 /// </summary>
 public sealed class TrayAuthenticator
 {
@@ -36,6 +36,9 @@ public sealed class TrayAuthenticator
     private readonly string? _pinnedThumbprint;
     private readonly string _credentialTarget;
     private readonly Func<CredentialPromptContext, NetworkCredential?> _prompt;
+
+    /// <summary>Whether the most recently created client uses Windows integrated authentication.</summary>
+    public bool CurrentClientUsesIntegratedAuth { get; private set; }
 
     /// <param name="server">The server base address.</param>
     /// <param name="prompt">
@@ -57,40 +60,48 @@ public sealed class TrayAuthenticator
     }
 
     /// <summary>
-    /// Builds the client for a sync attempt. Returns null only when the machine
-    /// needs explicit credentials and the user dismissed the sign-in prompt with
-    /// nothing saved — the caller should then report "sign-in required".
+    /// Builds the client for a sync attempt. Returns null when a standalone
+    /// machine has no saved credentials; the user can then choose "Sign in…"
+    /// from the tray menu. This method never opens UI.
     /// </summary>
     public HttpClient? CreateClient()
     {
         if (DomainJoin.IsIntegratedAuthAvailable())
         {
-            return SyncApiClient.CreateDefaultCredentialsClient(_server, _pinnedThumbprint);
+            return CreateIntegratedClient();
         }
 
-        var credential = ReadStored() ?? PromptAndStore(reason: null);
+        CurrentClientUsesIntegratedAuth = false;
+        var credential = ReadStored();
         return credential is null
             ? null
             : SyncApiClient.CreateExplicitCredentialsClient(_server, credential, _pinnedThumbprint);
     }
 
     /// <summary>
-    /// Prompts for fresh credentials after the server rejected the current ones,
-    /// saves them, and returns a new client — or null if the user cancelled.
+    /// Rebuilds an integrated-auth HTTP session. A fresh handler lets Windows
+    /// renegotiate after a transient Entra/Kerberos/NTLM token failure.
     /// </summary>
-    public HttpClient? ReAuthenticate(string reason)
+    public HttpClient CreateIntegratedClient()
     {
-        var credential = PromptAndStore(reason);
-        return credential is null
-            ? null
-            : SyncApiClient.CreateExplicitCredentialsClient(_server, credential, _pinnedThumbprint);
+        CurrentClientUsesIntegratedAuth = true;
+        return SyncApiClient.CreateDefaultCredentialsClient(_server, _pinnedThumbprint);
     }
 
     /// <summary>The manual "Sign in…" tray action: always prompts.</summary>
     public HttpClient? SignInInteractive()
-        => ReAuthenticate("Enter the domain account this PC should use.");
+    {
+        var credential = PromptAndStore("Enter the domain account this PC should use.");
+        if (credential is null)
+        {
+            return null;
+        }
 
-    /// <summary>Removes the stored credentials so the next sync will prompt again.</summary>
+        CurrentClientUsesIntegratedAuth = false;
+        return SyncApiClient.CreateExplicitCredentialsClient(_server, credential, _pinnedThumbprint);
+    }
+
+    /// <summary>Removes stored credentials; a later manual "Sign in…" can replace them.</summary>
     public void SignOut() => WindowsCredentialStore.Delete(_credentialTarget);
 
     /// <summary>

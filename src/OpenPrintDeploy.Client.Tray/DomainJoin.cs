@@ -16,10 +16,10 @@ internal static class DomainJoin
     /// <summary>
     /// True if integrated auth is plausibly available (domain- or Entra-joined).
     /// Detection uses <c>dsregcmd /status</c>, the OS tool that reports both join
-    /// types. If detection can't run, we assume <c>true</c> (the historical
-    /// behaviour) so a glitch never forces a credential prompt on a domain fleet —
-    /// a genuine auth rejection (401) still triggers the explicit-credentials
-    /// fallback.
+    /// types. The standalone sign-in path is enabled only when the output
+    /// explicitly says NO for both DomainJoined and AzureAdJoined. If detection
+    /// fails or is ambiguous, we assume integrated auth so a probe glitch cannot
+    /// expose an irrelevant sign-in action on managed laptops.
     /// </summary>
     public static bool IsIntegratedAuthAvailable()
     {
@@ -41,23 +41,32 @@ internal static class DomainJoin
             var output = process.StandardOutput.ReadToEnd();
             process.WaitForExit(5000);
 
-            return IsYes(output, "DomainJoined")
-                || IsYes(output, "AzureAdJoined")
-                || IsYes(output, "EnterpriseJoined");
+            var domainJoined = ReadJoinState(output, "DomainJoined");
+            var entraJoined = ReadJoinState(output, "AzureAdJoined");
+
+            // Only a confirmed NO/NO is standalone. Missing, malformed, or new
+            // dsregcmd output remains on the safe integrated-auth path and keeps
+            // the manual sign-in menu hidden.
+            return domainJoined != false || entraJoined != false;
         }
         catch
         {
-            // dsregcmd missing or blocked — assume integrated auth and let a 401
-            // drive the fallback rather than prompting unnecessarily.
+            // dsregcmd missing or blocked — assume integrated auth. A 401 will
+            // rebuild that session and retry without prompting.
             return true;
         }
     }
 
-    private static bool IsYes(string output, string key)
-        => JoinLine(key).IsMatch(output);
+    private static bool? ReadJoinState(string output, string key)
+    {
+        var match = JoinLine(key).Match(output);
+        return !match.Success
+            ? null
+            : string.Equals(match.Groups[1].Value, "YES", StringComparison.OrdinalIgnoreCase);
+    }
 
-    // Matches a "    <Key> : YES" line from dsregcmd's status block.
+    // Matches a "    <Key> : YES|NO" line from dsregcmd's status block.
     private static Regex JoinLine(string key)
-        => new($@"^\s*{Regex.Escape(key)}\s*:\s*YES\s*$",
+        => new($@"^\s*{Regex.Escape(key)}\s*:\s*(YES|NO)\s*$",
             RegexOptions.Multiline | RegexOptions.IgnoreCase);
 }

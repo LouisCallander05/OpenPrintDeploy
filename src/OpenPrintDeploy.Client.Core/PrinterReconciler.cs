@@ -45,12 +45,15 @@ public static class PrinterReconciler
 
         // A non-authoritative response means the server could not resolve the
         // user (directory/DC outage, empty/garbled body). We can't tell "you
-        // should have no printers" from "I don't know right now", so we make NO
-        // changes — never tear down printers we can't confirm are unwanted.
-        // Printers re-converge on the next sync once the directory recovers.
+        // should have no printers" from "I don't know right now", so we don't
+        // reconcile zone assignments. Explicit global removals are independent
+        // of directory resolution and remain safe to enforce.
+        var forcedRemovals = (desired.RemovePrinters ?? [])
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
         if (!desired.Authoritative)
         {
-            return new ReconcileResult([], [], []);
+            return new ReconcileResult([], forcedRemovals, []);
         }
 
         var desiredUncs = desired.Printers
@@ -70,6 +73,8 @@ public static class PrinterReconciler
 
         var toRemove = managed
             .Where(unc => !desiredUncs.Contains(unc))
+            .Concat(forcedRemovals)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 
         // Adopt: a desired printer already on the machine that we don't yet

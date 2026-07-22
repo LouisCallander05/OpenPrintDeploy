@@ -38,6 +38,10 @@ public sealed class SyncHandler
         CancellationToken ct)
     {
         var username = user.Identity?.Name ?? "(unknown)";
+        var removals = await _db.RemovedPrinters
+            .AsNoTracking()
+            .Select(p => p.UncPath)
+            .ToListAsync(ct);
 
         // Prefer the group SIDs in the authenticated token (the Kerberos/NTLM
         // PAC). They already include the user's groups across every trusted
@@ -59,9 +63,9 @@ public sealed class SyncHandler
             if (!resolution.Available)
             {
                 _logger.LogWarning(
-                    "Sync for {User} on {Machine}: directory unavailable; returning non-authoritative response (no changes on the client).",
-                    username, machineName ?? "(unknown)");
-                return new SyncResponseDto([], Authoritative: false);
+                    "Sync for {User} on {Machine}: directory unavailable; returning non-authoritative assignments with {RemovalCount} explicit removal(s).",
+                    username, machineName ?? "(unknown)", removals.Count);
+                return new SyncResponseDto([], Authoritative: false, RemovePrinters: removals);
             }
 
             groupSids = resolution.Sids;
@@ -76,7 +80,7 @@ public sealed class SyncHandler
             _logger.LogInformation(
                 "Sync for {User} on {Machine}: no matching zones (groups={GroupCount}, source={Source})",
                 username, machineName ?? "(unknown)", groupSids.Count, source);
-            return new SyncResponseDto([]);
+            return new SyncResponseDto([], RemovePrinters: removals);
         }
 
         var printers = await _db.Printers
@@ -89,6 +93,6 @@ public sealed class SyncHandler
             "Sync for {User} on {Machine}: returning {Count} printer(s)",
             username, machineName ?? "(unknown)", printers.Count);
 
-        return new SyncResponseDto(printers);
+        return new SyncResponseDto(printers, RemovePrinters: removals);
     }
 }

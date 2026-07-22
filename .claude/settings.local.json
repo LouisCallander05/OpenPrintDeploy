@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(gh run:*)",
+      "Bash(for f:*)",
+      "Bash(do echo:*)",
+      "Read(//c/Users/louis/OneDrive/Documents/Code/Open Print Deploy/OpenPrintDeploy/**)",
+      "Bash(done)",
+      "Bash(dotnet build:*)"
+    ]
+  }
+}
