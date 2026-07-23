@@ -51,10 +51,12 @@ public sealed class AppDbContext : DbContext
 
         var clientDevice = modelBuilder.Entity<ClientDeviceEntity>();
         clientDevice.HasKey(d => d.Id);
+        clientDevice.Property(d => d.DeviceIdentifier).HasMaxLength(128);
         clientDevice.Property(d => d.MachineName).HasMaxLength(128).IsRequired();
         clientDevice.Property(d => d.NormalizedMachineName).HasMaxLength(128).IsRequired();
         clientDevice.Property(d => d.ClientVersion).HasMaxLength(64);
-        clientDevice.HasIndex(d => d.NormalizedMachineName).IsUnique();
+        clientDevice.HasIndex(d => d.DeviceIdentifier).IsUnique();
+        clientDevice.HasIndex(d => d.NormalizedMachineName);
 
         var clientUser = modelBuilder.Entity<ClientUserEntity>();
         clientUser.HasKey(u => u.Id);

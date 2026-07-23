@@ -33,14 +33,20 @@ public sealed class SyncOrchestrator
         string? machineName,
         IReadOnlyCollection<ManagedPrinter> previouslyManaged,
         CancellationToken ct = default,
-        string? clientVersion = null)
+        string? clientVersion = null,
+        string? deviceId = null)
     {
         var requestedSyncId = Guid.NewGuid();
         SyncResponseDto? desired = null;
 
         try
         {
-            desired = await _api.FetchAsync(machineName, ct, requestedSyncId, clientVersion);
+            desired = await _api.FetchAsync(
+                machineName,
+                ct,
+                requestedSyncId,
+                clientVersion,
+                deviceId);
             var currentlyInstalled = await _applier.EnumerateInstalledAsync(ct);
             var plan = PrinterReconciler.Reconcile(
                 desired,
@@ -110,7 +116,8 @@ public sealed class SyncOrchestrator
                     machineName,
                     clientVersion,
                     reportStatus,
-                    printerResults), ct);
+                    printerResults,
+                    DeviceId: deviceId), ct);
             }
 
             return new SyncResult(managed, addedNames, failedNames, reportStatus);
@@ -125,7 +132,8 @@ public sealed class SyncOrchestrator
                     clientVersion,
                     SyncReportStatus.Failed,
                     [],
-                    ex.Message), ct);
+                    ex.Message,
+                    deviceId), ct);
             }
 
             throw;

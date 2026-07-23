@@ -145,12 +145,19 @@ public sealed class SyncOrchestratorTests
         var api = new SyncApiClient(new HttpClient(handler) { BaseAddress = new Uri("http://localhost") });
         var orchestrator = new SyncOrchestrator(api, new RecordingApplier());
 
-        var result = await orchestrator.SyncOnceAsync("PC1", [], clientVersion: "1.2.3");
+        var result = await orchestrator.SyncOnceAsync(
+            "LONG-COMPUTER-NAME",
+            [],
+            clientVersion: "1.2.3",
+            deviceId: "DEVICE-ID-001");
 
         Assert.Equal(SyncReportStatus.Synced, result.ReportStatus);
         Assert.NotNull(handler.Report);
         Assert.Equal(syncId, handler.Report!.SyncId);
-        Assert.Equal("PC1", handler.Report.MachineName);
+        Assert.Equal("LONG-COMPUTER-NAME", handler.Request!.MachineName);
+        Assert.Equal("DEVICE-ID-001", handler.Request.DeviceId);
+        Assert.Equal("LONG-COMPUTER-NAME", handler.Report.MachineName);
+        Assert.Equal("DEVICE-ID-001", handler.Report.DeviceId);
         Assert.Equal("1.2.3", handler.Report.ClientVersion);
         var printer = Assert.Single(handler.Report.Printers);
         Assert.Equal(PrinterSyncOperation.Installed, printer.Operation);
@@ -263,6 +270,7 @@ public sealed class SyncOrchestratorTests
         }
 
         public SyncReportDto? Report { get; private set; }
+        public SyncRequestDto? Request { get; private set; }
 
         protected override async Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
@@ -273,6 +281,8 @@ public sealed class SyncOrchestratorTests
                 Report = await request.Content!.ReadFromJsonAsync<SyncReportDto>(cancellationToken);
                 return new HttpResponseMessage(_reportStatus);
             }
+
+            Request = await request.Content!.ReadFromJsonAsync<SyncRequestDto>(cancellationToken);
 
             return new HttpResponseMessage(HttpStatusCode.OK)
             {

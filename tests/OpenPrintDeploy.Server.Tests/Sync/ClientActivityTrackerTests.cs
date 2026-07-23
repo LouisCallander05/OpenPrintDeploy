@@ -120,6 +120,68 @@ public sealed class ClientActivityTrackerTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task StableDeviceIds_DoNotMergeWithCollidingLegacyName()
+    {
+        const string legacyName = "3931-STU-S-PW0B";
+        const string firstFullName = "3931-STU-S-PW0B-LIBRARY";
+        const string secondFullName = "3931-STU-S-PW0B-SCIENCE";
+        var firstSync = Guid.NewGuid();
+
+        await _tracker.RecordSyncStartedAsync(
+            @"DOMAIN\alice",
+            new SyncRequestDto(legacyName, firstSync, "0.9.16"),
+            new SyncResponseDto([], SyncId: firstSync),
+            default);
+
+        var firstDeviceSync = Guid.NewGuid();
+        await _tracker.RecordSyncStartedAsync(
+            @"DOMAIN\alice",
+            new SyncRequestDto(firstFullName, firstDeviceSync, "0.9.17", "DEVICE-A"),
+            new SyncResponseDto([], SyncId: firstDeviceSync),
+            default);
+
+        var secondDeviceSync = Guid.NewGuid();
+        await _tracker.RecordSyncStartedAsync(
+            @"DOMAIN\bob",
+            new SyncRequestDto(secondFullName, secondDeviceSync, "0.9.17", "DEVICE-B"),
+            new SyncResponseDto([], SyncId: secondDeviceSync),
+            default);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        var devices = await db.ClientDevices.OrderBy(d => d.MachineName).ToListAsync();
+        Assert.Equal(3, devices.Count);
+        Assert.Contains(devices, d => d.DeviceIdentifier is null && d.MachineName == legacyName);
+        Assert.Contains(devices, d => d.DeviceIdentifier == "DEVICE-A" && d.MachineName == firstFullName);
+        Assert.Contains(devices, d => d.DeviceIdentifier == "DEVICE-B" && d.MachineName == secondFullName);
+    }
+
+    [Fact]
+    public async Task StableDeviceId_PreservesRecordWhenHostnameChanges()
+    {
+        const string deviceId = "DEVICE-A";
+        var firstSync = Guid.NewGuid();
+        await _tracker.RecordSyncStartedAsync(
+            @"DOMAIN\alice",
+            new SyncRequestDto("OLD-LONG-HOSTNAME", firstSync, "0.9.17", deviceId),
+            new SyncResponseDto([], SyncId: firstSync),
+            default);
+
+        var secondSync = Guid.NewGuid();
+        await _tracker.RecordSyncStartedAsync(
+            @"DOMAIN\alice",
+            new SyncRequestDto("NEW-LONG-HOSTNAME", secondSync, "0.9.17", deviceId),
+            new SyncResponseDto([], SyncId: secondSync),
+            default);
+
+        await using var db = await _factory.CreateDbContextAsync();
+        var device = await db.ClientDevices.Include(d => d.Users).SingleAsync();
+        Assert.Equal("NEW-LONG-HOSTNAME", device.MachineName);
+        Assert.Equal(deviceId, device.DeviceIdentifier);
+        Assert.Single(device.Users);
+        Assert.Equal(1, await db.ClientActivities.CountAsync(a => a.Type == "Client seen"));
+    }
+
+    [Fact]
     public async Task AdminQueries_ReturnDeviceAndDetails()
     {
         var syncId = Guid.NewGuid();

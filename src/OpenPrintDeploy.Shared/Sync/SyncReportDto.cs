@@ -7,7 +7,8 @@ public sealed record SyncReportDto(
     string? ClientVersion,
     SyncReportStatus Status,
     IReadOnlyList<PrinterSyncResultDto> Printers,
-    string? Error = null);
+    string? Error = null,
+    string? DeviceId = null);
 
 public enum SyncReportStatus
 {

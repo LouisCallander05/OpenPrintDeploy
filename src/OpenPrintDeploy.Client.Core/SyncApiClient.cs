@@ -23,10 +23,11 @@ public sealed class SyncApiClient
         string? machineName,
         CancellationToken ct = default,
         Guid? syncId = null,
-        string? clientVersion = null)
+        string? clientVersion = null,
+        string? deviceId = null)
     {
         using var response = await _http.PostAsJsonAsync(
-            "sync", new SyncRequestDto(machineName, syncId, clientVersion), ct);
+            "sync", new SyncRequestDto(machineName, syncId, clientVersion, deviceId), ct);
         response.EnsureSuccessStatusCode();
         var result = await response.Content.ReadFromJsonAsync<SyncResponseDto>(ct);
         // A 200 with an empty/unparseable body is a server hiccup, not an

@@ -33,7 +33,13 @@ public sealed class ClientActivityTracker
             await using var db = await _dbFactory.CreateDbContextAsync(ct);
             var now = DateTimeOffset.UtcNow;
             var (device, clientUser, isNewUser) = await GetOrCreateAsync(
-                db, request.MachineName, username, request.ClientVersion, now, ct);
+                db,
+                request.MachineName,
+                request.DeviceId,
+                username,
+                request.ClientVersion,
+                now,
+                ct);
 
             var priorVersion = device.ClientVersion;
             device.LastSeenAt = now;
@@ -147,7 +153,13 @@ public sealed class ClientActivityTracker
             await using var db = await _dbFactory.CreateDbContextAsync(ct);
             var now = DateTimeOffset.UtcNow;
             var (device, clientUser, _) = await GetOrCreateAsync(
-                db, report.MachineName, username, report.ClientVersion, now, ct);
+                db,
+                report.MachineName,
+                report.DeviceId,
+                username,
+                report.ClientVersion,
+                now,
+                ct);
 
             // A late report from an older overlapping sync must not replace the
             // current state. A repeated report for an already-completed sync is
@@ -303,6 +315,7 @@ public sealed class ClientActivityTracker
     private static async Task<(ClientDeviceEntity Device, ClientUserEntity User, bool IsNewUser)> GetOrCreateAsync(
         AppDbContext db,
         string? machineName,
+        string? deviceId,
         string username,
         string? clientVersion,
         DateTimeOffset now,
@@ -312,13 +325,38 @@ public sealed class ClientActivityTracker
         var normalizedMachine = Normalize(displayMachine, 128);
         var displayUser = Limit(username.Trim(), 256)!;
         var normalizedUser = Normalize(displayUser, 256);
+        var normalizedDeviceId = string.IsNullOrWhiteSpace(deviceId)
+            ? null
+            : Normalize(deviceId, 128);
 
-        var device = await db.ClientDevices
-            .FirstOrDefaultAsync(d => d.NormalizedMachineName == normalizedMachine, ct);
+        ClientDeviceEntity? device;
+        if (normalizedDeviceId is not null)
+        {
+            device = await db.ClientDevices
+                .FirstOrDefaultAsync(d => d.DeviceIdentifier == normalizedDeviceId, ct);
+            if (device is not null)
+            {
+                // A hostname can change without changing the Windows install.
+                // Keep the stable device row and update only its display name.
+                device.MachineName = displayMachine;
+                device.NormalizedMachineName = normalizedMachine;
+            }
+        }
+        else
+        {
+            // Old clients have no stable identifier. Keep them isolated to
+            // legacy rows so a truncated name can never overwrite a new row.
+            device = await db.ClientDevices.FirstOrDefaultAsync(
+                d => d.DeviceIdentifier == null
+                     && d.NormalizedMachineName == normalizedMachine,
+                ct);
+        }
+
         if (device is null)
         {
             device = new ClientDeviceEntity
             {
+                DeviceIdentifier = normalizedDeviceId,
                 MachineName = displayMachine,
                 NormalizedMachineName = normalizedMachine,
                 ClientVersion = Limit(clientVersion, 64),

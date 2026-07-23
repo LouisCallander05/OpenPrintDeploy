@@ -291,7 +291,9 @@ app.MapPost("/sync", async (
         return Results.Unauthorized();
     }
 
-    if (request.MachineName?.Length > 128 || request.ClientVersion?.Length > 64)
+    if (request.MachineName?.Length > 128
+        || request.DeviceId?.Length > 128
+        || request.ClientVersion?.Length > 64)
     {
         return Results.BadRequest();
     }
@@ -319,6 +321,7 @@ app.MapPost("/sync/report", async (
 
     if (report.SyncId == Guid.Empty
         || report.MachineName?.Length > 128
+        || report.DeviceId?.Length > 128
         || report.ClientVersion?.Length > 64
         || report.Error?.Length > 4096
         || report.Printers is null

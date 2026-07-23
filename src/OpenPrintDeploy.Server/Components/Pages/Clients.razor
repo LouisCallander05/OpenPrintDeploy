@@ -64,16 +64,13 @@ else
         <table class="table table-hover align-middle">
             <thead>
                 <tr>
-                    <th>Status</th><th>Device</th><th>Last user</th><th>Printers</th><th>Client</th><th>Last seen</th>
+                    <th>Device</th><th>Last user</th><th>Printers</th><th>Client</th><th>Last seen</th>
                 </tr>
             </thead>
             <tbody>
                 @foreach (var device in _devices)
                 {
                     <tr>
-                        <td>
-                            <span class="badge @StatusClass(device)">@(IsOnline(device) ? device.Health : "Offline")</span>
-                        </td>
                         <td>
                             <a class="fw-semibold text-decoration-none" href="clients/@device.Id">@device.MachineName</a>
                             @if (device.UserCount > 1)
@@ -139,13 +136,6 @@ else
     private bool IsOnline(ClientDeviceSummary device)
         => DateTimeOffset.UtcNow - device.LastSeenAt <= TimeSpan.FromMinutes(
             Math.Clamp(ActivityOptions.Value.OnlineWindowMinutes, 1, 1440));
-
-    private string StatusClass(ClientDeviceSummary device)
-        => !IsOnline(device) ? "text-bg-secondary"
-            : device.Health == "Healthy" ? "text-bg-success"
-            : device.Health == "Syncing" ? "text-bg-primary"
-            : device.Health == "Attention" ? "text-bg-danger"
-            : "text-bg-warning";
 
     private static string Ago(DateTimeOffset value)
     {
