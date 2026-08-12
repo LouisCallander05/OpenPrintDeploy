@@ -1,231 +1,156 @@
 # OpenPrintDeploy
 
-Centralised printer deployment for Windows fleets, driven by LDAP/AD group
-membership and zones.
+Centralised deployment of shared printers to Windows users, based on Active
+Directory group membership.
 
-> **Status:** early development. Not yet usable.
+OpenPrintDeploy runs on a Windows print server and provides a web admin console
+for importing shared printers, assigning them to zones, and monitoring clients.
+A per-user Windows tray client periodically resolves the signed-in user's zones
+and keeps their printer connections in sync.
 
-## What
+## Features
 
-If you run a Windows print server with AD and an Intune-managed fleet, you
-already have everything you need to deliver shared printers to users — except
-the brain that decides *which* printers go to *which* users. OpenPrintDeploy
-is that brain.
+- Import shared printers from the Windows print spooler or add them by UNC path.
+- Group printers into zones and assign each zone to one or more AD groups.
+- Install and remove per-user printer connections automatically.
+- Preserve existing printers that OpenPrintDeploy did not install.
+- Track client status, versions, printer state, sync failures, and removal history.
+- Authenticate domain- and Entra-joined clients with Windows Integrated
+  Authentication.
+- Support workgroup clients through an explicit domain sign-in stored in Windows
+  Credential Manager.
+- Serve the client MSI directly from the admin console, preconfigured for its
+  server and self-signed certificate when required.
+- Use HTTPS by default, with either an automatically provisioned certificate or
+  an administrator-supplied PFX.
 
-- **Server** — a .NET service that runs on your print server. REST API +
-  Blazor admin UI. Talks LDAP, knows your printers, evaluates "zones".
-- **Client** — a small .NET tray app + service deployed via Intune as MSI.
-  Calls home at logon and on a timer, installs/removes shared printers to
-  match the user's resolved zone set.
-- **Zones** — admin-defined bundles of printers, gated on AD group, subnet,
-  or computer OU. Any combination, any number of rules.
-- **Client activity** — an admin Clients page groups syncs by device and user,
-  showing managed printer health, installation failures, and removal history.
+Windows remains responsible for printer drivers and Point and Print policy.
+OpenPrintDeploy manages connections to existing `\\server\share` printer queues.
 
-Windows handles driver delivery itself (point-and-print). OpenPrintDeploy
-just tells clients which `\\server\share` UNCs to connect.
+## Requirements
 
-## Status
+- A 64-bit Windows print server with reachable shared printer queues.
+- Active Directory and a reachable domain controller. LDAPS on port 636 is the
+  default directory configuration.
+- Windows client devices that can reach the server on TCP 5443.
+- The .NET 8 SDK only when building from source. Release installers are
+  self-contained and do not require a separately installed .NET runtime.
 
-Phase 0 — scaffolding. See `docs/architecture.md` for the public summary,
-or the project planning vault for the live design.
+## Install the server
 
-## Repo layout
+1. Download `OpenPrintDeploy.Server.msi` from the
+   [latest release](https://github.com/LouisCallander05/OpenPrintDeploy/releases/latest).
+2. Install it interactively, or run:
 
+   ```cmd
+   msiexec /i OpenPrintDeploy.Server.msi /quiet
+   ```
+
+3. Open **OpenPrintDeploy Admin** from the Start Menu or browse to:
+
+   ```text
+   https://<print-server>:5443/
+   ```
+
+4. Complete first-run setup to restrict administration to the appropriate AD
+   group or users.
+5. On the **Directory** page, test the LDAP connection. Then import printers,
+   create zones, and assign AD groups.
+
+The MSI installs the `OpenPrintDeployServer` Windows service, opens TCP 5443 in
+Windows Firewall, and creates Start Menu and desktop shortcuts. Application data
+is stored in `C:\ProgramData\OpenPrintDeploy` and is retained during upgrades and
+uninstall.
+
+The server is HTTPS-only by default. It creates a long-lived self-signed
+certificate on first start unless `Https:PfxPath` is configured. Trust that
+certificate on administrator workstations and clients, use the thumbprint
+pinning included in the generated client installer, or provide a certificate
+issued by a trusted CA. Configuration is in:
+
+```text
+C:\Program Files\OpenPrintDeploy\appsettings.json
 ```
-src/
-  OpenPrintDeploy.Shared          # DTOs / contracts shared by server + client
-  OpenPrintDeploy.Server          # ASP.NET Core 8 — REST API + Blazor admin UI
-  OpenPrintDeploy.Client.Core     # Cross-platform sync/reconcile logic
-  OpenPrintDeploy.Client.Tray     # WPF tray app — user session, applies printers
-installer/
-  OpenPrintDeploy.Server.Msi      # WiX per-machine MSI for the server
-  OpenPrintDeploy.Client.Msi      # WiX per-machine MSI for the tray client
-  OpenPrintDeploy.Client.Cleanup  # MSI uninstall helper
-docs/
-OpenPrintDeploy.sln
+
+See [Architecture and security](docs/architecture.md) for LDAP overrides,
+certificate management, authentication, persistence, and migration details.
+
+## Deploy the client
+
+Download the client MSI from the server dashboard. The downloaded filename
+contains the server hostname and, for a self-signed certificate, its thumbprint,
+so double-clicking it configures the client automatically.
+
+For Intune, rename the downloaded file to `OpenPrintDeploy.Client.msi`, wrap it
+as a Win32 app with
+[IntuneWinAppUtil](https://github.com/Microsoft/Microsoft-Win32-Content-Prep-Tool),
+and use the install command shown on the dashboard. It has this form:
+
+```cmd
+msiexec /i "OpenPrintDeploy.Client.msi" SERVER="https://printsrv01.example.com:5443" CERTTHUMBPRINT="AB12..." /qn
 ```
 
-## Build
+The `CERTTHUMBPRINT` property is needed only for the server's self-signed
+certificate. For a certificate issued by a CA already trusted by clients, omit
+it.
 
-Requires the .NET 8 SDK (pinned via `global.json`).
+Use this uninstall command:
 
-```sh
+```cmd
+msiexec /x "OpenPrintDeploy.Client.msi" /qn
+```
+
+The MSI installs the tray application under
+`C:\Program Files\OpenPrintDeploy\Tray` and starts it in each user session. By
+default, uninstall removes printer connections created by OpenPrintDeploy while
+leaving printers that existed before OpenPrintDeploy adopted them.
+
+## Build and develop
+
+The .NET SDK version is pinned in `global.json`. On Windows:
+
+```powershell
 dotnet restore
-dotnet build
+dotnet test OpenPrintDeploy.sln
 ```
 
-The tray app (`OpenPrintDeploy.Client.Tray`) targets `net8.0-windows` and
-must be built on Windows. The server and client service are cross-platform
-at build time and can be built on Linux / macOS for dev.
+To run the server locally without Active Directory, copy the development
+configuration template and start the project:
 
-To run the server locally:
-
-```sh
-# One-time: enable dev auth + the in-memory Stub directory (no AD required).
-# appsettings.Development.json is gitignored; copy the committed template.
-cp src/OpenPrintDeploy.Server/appsettings.Development.json{.example,}
-
+```powershell
+Copy-Item src/OpenPrintDeploy.Server/appsettings.Development.json.example `
+  src/OpenPrintDeploy.Server/appsettings.Development.json
 dotnet run --project src/OpenPrintDeploy.Server
-# → http://localhost:5080/health   (dev only; production is HTTPS-only on 5443)
 ```
 
-Without `appsettings.Development.json` the server falls back to the production
-defaults (Negotiate auth + LDAP), so `/sync` will 401/500 on a box with no AD.
+The development admin console is available at `http://localhost:5080/` and uses
+stub users, groups, printers, and header-based development authentication. This
+mode must not be used for a deployed server.
 
-## Production: domain-joined print server
-
-### Deploy
-
-From this repo on a dev machine with the .NET 8 SDK:
+To build the self-contained server MSI, including the client MSI served by the
+dashboard:
 
 ```powershell
 .\scripts\Publish-Server.ps1
 ```
 
-This produces a single per-machine MSI at `publish/OpenPrintDeploy.Server.msi`,
-built with the [WiX Toolset][wix] from a self-contained `win-x64` publish (the
-WiX SDK and extensions restore from NuGet automatically — no global tool to
-install). The target machine doesn't need the .NET 8 hosting bundle.
+The output is `publish/OpenPrintDeploy.Server.msi`. The WiX SDK and extensions
+restore through NuGet; no global WiX installation is required.
 
-Copy `OpenPrintDeploy.Server.msi` to the print server, then install it — either:
+## Repository layout
 
-- **Double-click it** (UAC elevates automatically), or
-- Silently / scripted: `msiexec /i OpenPrintDeploy.Server.msi /quiet`
-
-`msiexec` isn't subject to PowerShell script-block policies, so EDR products
-that block PowerShell by default (Cylance, etc.) won't reject it. The MSI
-installs to `C:\Program Files\OpenPrintDeploy`, registers `OpenPrintDeployServer`
-as a Windows service (Local SYSTEM, autostart, restart-on-failure), opens TCP
-**5443** in the firewall, adds a Start Menu shortcut (**OpenPrintDeploy →
-OpenPrintDeploy Admin**), and starts the service. The database lives at
-`C:\ProgramData\OpenPrintDeploy\app.db` and survives upgrades and uninstalls.
-
-The server is **HTTPS-only on port 5443** by default (open *that* port in the
-firewall, not 5080). On first boot it provisions a self-signed certificate for
-this host — distribute its public cert to clients' Trusted Root, pin its
-thumbprint on the client, or supply your own (`Https:PfxPath`). See
-`docs/architecture.md` → *Transport security (TLS)*.
-
-Open the admin UI from the Start Menu shortcut, or from a workstation:
-
+```text
+src/
+  OpenPrintDeploy.Server       ASP.NET Core server, API, and Blazor admin console
+  OpenPrintDeploy.Client.Tray  WPF per-user tray client
+  OpenPrintDeploy.Client.Core  Client sync and reconciliation logic
+  OpenPrintDeploy.Shared       Shared API contracts and installer naming
+installer/
+  OpenPrintDeploy.Server.Msi   Server WiX package
+  OpenPrintDeploy.Client.Msi   Client WiX package
+  OpenPrintDeploy.Client.Cleanup
+                               Per-user printer cleanup helper
+scripts/                       Publish and signing scripts
+tests/                         Server, client-core, and shared tests
+docs/architecture.md           Architecture, security, and operational details
 ```
-https://<print-server>:5443/admin/directory
-```
-
-Click **Test connection**. If LDAP, DC and search base auto-resolve and the
-bind succeeds, you're done. Logs go to **Event Viewer → Windows Logs →
-Application** (source: `OpenPrintDeployServer`).
-
-To upgrade, just install a newer MSI — it replaces the prior version in place
-and keeps the database. To remove, use **Settings → Apps** (or **Add/Remove
-Programs**), or:
-
-```cmd
-msiexec /x OpenPrintDeploy.Server.msi          :: or "Uninstall" from Apps
-```
-
-Uninstall stops and removes the service and firewall rule. The database under
-`C:\ProgramData\OpenPrintDeploy` is left in place; delete that folder by hand if
-you want a clean wipe.
-
-[wix]: https://wixtoolset.org/
-
-## Endpoints: the tray client
-
-The client ships only as a **per-machine MSI**. The tray and its runtime are
-contained inside that MSI. The tray is installed for the machine
-and auto-starts in every user's session via an `HKLM\…\Run` key; it
-authenticates to the server as the signed-in user via Kerberos, calls `/sync`,
-and applies the resolved printers to the user's per-user (HKCU) connection list.
-
-**Download it straight from the server.** On the admin dashboard, click
-**Download client MSI** (or `GET /download/client-msi`). The server returns an
-MSI named for its host and, when needed, its self-signed certificate thumbprint.
-A manual double-click therefore installs a correctly targeted client without
-extra properties. The client MSI is not published as a separate GitHub release
-asset; the installed server is its distribution point.
-
-```cmd
-:: Install a dashboard download manually
-msiexec /i "OpenPrintDeploy - printsrv01.corp.local.msi"
-
-:: Uninstall
-msiexec /x "OpenPrintDeploy.Client.msi"
-```
-
-The MSI installs the tray under `C:\Program Files\OpenPrintDeploy\Tray\`, stores
-its configuration in the machine registry, and registers Run-key auto-start.
-The tray launches at next user logon; right-click its system-tray icon to see
-"Sync now", "Sign in…", the configured server, and the version.
-
-### Non-domain-joined machines (sign in with a domain account)
-
-Integrated auth (Kerberos/NTLM as the signed-in user) only works when the
-machine is joined to the AD domain or to Entra. On a standalone (workgroup)
-laptop the logged-in user has no domain identity, so `/sync` would be rejected.
-
-The tray detects this (via `dsregcmd /status`): when the device is **not**
-domain- or Entra-joined, it prompts for a domain account (`DOMAIN\user` or
-`user@domain`) and authenticates with those credentials instead — SSPI uses NTLM
-with the supplied account, and the domain-joined server validates it against a
-domain controller. The same prompt appears as a fallback if integrated auth is
-ever rejected with a 401, and on demand via the **"Sign in…"** tray item.
-
-Credentials are saved in the **Windows Credential Manager** (per user, under
-target `OpenPrintDeploy:<server-host>`), so the prompt appears only once until
-the password changes. No server configuration is required — the server's
-existing Negotiate authentication already accepts these credentials.
-
-### Intune deployment
-
-For fleet rollout, download the client MSI from the server admin page, rename it
-to `OpenPrintDeploy.Client.msi`, place it alone in a source folder, and wrap it
-with Microsoft's [IntuneWinAppUtil][intunewin] as a Win32 app:
-
-```cmd
-IntuneWinAppUtil.exe -c <folder-with-the-msi> -s "OpenPrintDeploy.Client.msi" -o <out>
-```
-
-Use explicit MSI properties for a stable Intune command. The admin page shows
-the correct command for the current server:
-
-```
-msiexec /i "OpenPrintDeploy.Client.msi" SERVER="https://printsrv01.corp.local:5443" CERTTHUMBPRINT="AB12…" /qn
-```
-
-Intune uninstall command:
-
-```
-msiexec /x "{PRODUCT-CODE-FROM-MSI}" /qn
-```
-
-Intune can derive the uninstall command and MSI product-code detection rule
-from the wrapped MSI automatically.
-
-[intunewin]: https://github.com/Microsoft/Microsoft-Win32-Content-Prep-Tool
-
-### Identity & directory config
-
-- The service runs as **Local SYSTEM** by default — it authenticates to AD as
-  the computer account (`PRINTSRV01$`). No LDAP bind password lives in config.
-  To run as a domain service account instead, set the service's logon identity
-  in services.msc after install.
-- Leave `Directory:Ldap:Server` and `Directory:Ldap:SearchBase` blank — the
-  server discovers a DC and the domain DN via `Domain.GetCurrentDomain()` at
-  first use. Override them if you need to pin a specific DC.
-- Set `Directory:Ldap:AuthMode` to `Basic` (and supply `BindDn`/`BindPassword`)
-  only when the host isn't domain-joined.
-- **Multiple domains / trusts.** Zone matching uses the group SIDs in the user's
-  authenticated Kerberos/NTLM token, which already span every trusted domain. So
-  a server joined to one domain (e.g. students) correctly resolves users from a
-  trusted domain (e.g. staff) — no multi-domain LDAP config needed. The LDAP
-  settings only drive the admin group *picker* and SID→name labels, which see the
-  server's own domain; for a group in another domain, paste its SID into the zone
-  rule (find it via **Directory → Check my access** signed in as that user). The
-  directory lookup is only a fallback for identities whose token carries no
-  groups (e.g. the dev header auth).
-
-## License
-
-MIT (planned — to be added).
