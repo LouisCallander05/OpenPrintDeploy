@@ -1,3 +1,5 @@
+using OpenPrintDeploy.Shared.Sync;
+
 namespace OpenPrintDeploy.Client.Core;
 
 /// <param name="ManagedPrinters">All printers this client now manages, each with its provenance.</param>
@@ -6,7 +8,8 @@ namespace OpenPrintDeploy.Client.Core;
 public sealed record SyncResult(
     IReadOnlyList<ManagedPrinter> ManagedPrinters,
     IReadOnlyList<string> AddedNames,
-    IReadOnlyList<string> FailedNames)
+    IReadOnlyList<string> FailedNames,
+    SyncReportStatus ReportStatus = SyncReportStatus.Synced)
 {
     public IReadOnlyList<PrinterApplyError> Failures { get; init; } = [];
 }
@@ -34,24 +37,41 @@ public sealed class SyncOrchestrator
     public async Task<SyncResult> SyncOnceAsync(
         string? machineName,
         IReadOnlyCollection<ManagedPrinter> previouslyManaged,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        string? clientVersion = null,
+        string? deviceId = null)
     {
-        var desired = await _api.FetchAsync(machineName, ct);
-        var currentlyInstalled = await _applier.EnumerateInstalledAsync(ct);
-        var plan = PrinterReconciler.Reconcile(
-            desired,
-            previouslyManaged.Select(m => m.Unc).ToList(),
-            currentlyInstalled);
-        // Check all assigned queues, including existing connections, for updates.
-        // Failed preparation must not cause working connections to be removed.
-        var driverFailures = _drivers is not null && desired.Authoritative
-            ? await _drivers.PrepareAsync(desired.Printers.Where(p =>
-                !plan.ToRemove.Contains(p.UncPath, StringComparer.OrdinalIgnoreCase)).ToList(), ct)
-            : [];
-        var blocked = driverFailures.Select(f => f.Printer.UncPath).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        plan = plan with { ToAdd = plan.ToAdd.Where(p => !blocked.Contains(p.UncPath)
-            && !plan.ToRemove.Contains(p.UncPath, StringComparer.OrdinalIgnoreCase)).ToList() };
-        var outcome = await _applier.ApplyAsync(plan, ct);
+        var requestedSyncId = Guid.NewGuid();
+        SyncResponseDto? desired = null;
+
+        try
+        {
+            desired = await _api.FetchAsync(
+                machineName,
+                ct,
+                requestedSyncId,
+                clientVersion,
+                deviceId);
+            var currentlyInstalled = await _applier.EnumerateInstalledAsync(ct);
+            var plan = PrinterReconciler.Reconcile(
+                desired,
+                previouslyManaged.Select(m => m.Unc).ToList(),
+                currentlyInstalled);
+            // Prepare drivers for existing queues too, so server updates reach clients.
+            var driverFailures = _drivers is not null && desired.Authoritative
+                ? await _drivers.PrepareAsync(desired.Printers.Where(p =>
+                    !plan.ToRemove.Contains(p.UncPath, StringComparer.OrdinalIgnoreCase)).ToList(), ct)
+                : [];
+            var blocked = driverFailures.Select(f => f.Printer.UncPath)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            plan = plan with
+            {
+                ToAdd = plan.ToAdd.Where(p => !blocked.Contains(p.UncPath)
+                    && !plan.ToRemove.Contains(p.UncPath, StringComparer.OrdinalIgnoreCase)).ToList()
+            };
+            var applied = await _applier.ApplyAsync(plan, ct);
+            var outcome = new ApplyOutcome(applied.Added,
+                applied.Failed.Concat(driverFailures).ToList(), applied.Removed, applied.FailedRemovals);
 
         // Rebuild the managed set, preserving each printer's provenance. The
         // `seen` set both de-duplicates and enforces precedence — the first
@@ -64,41 +84,163 @@ public sealed class SyncOrchestrator
         //    forgetting it or wrongly reporting it present;
         //  - adopted: printers that already existed and we now claim (e.g. left
         //    by PaperCut) — kept on uninstall, removed only via the zone.
-        var managed = new List<ManagedPrinter>();
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var managed = new List<ManagedPrinter>();
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var failedRemovals = outcome.FailedRemovals
+                .Select(r => r.UncPath)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-        foreach (var m in previouslyManaged)
-        {
-            if (plan.ToRemove.Contains(m.Unc, StringComparer.OrdinalIgnoreCase))
+            foreach (var m in previouslyManaged)
             {
-                continue;
+                if (plan.ToRemove.Contains(m.Unc, StringComparer.OrdinalIgnoreCase)
+                    && !failedRemovals.Contains(m.Unc))
+                {
+                    continue;
+                }
+
+                if (seen.Add(m.Unc))
+                {
+                    managed.Add(m);
+                }
             }
 
-            if (seen.Add(m.Unc))
+            foreach (var p in outcome.Added)
             {
-                managed.Add(m);
+                if (seen.Add(p.UncPath))
+                {
+                    managed.Add(new ManagedPrinter(p.UncPath, PrinterOrigin.Created));
+                }
+            }
+
+            foreach (var unc in plan.ToAdopt)
+            {
+                if (seen.Add(unc))
+                {
+                    managed.Add(new ManagedPrinter(unc, PrinterOrigin.Adopted));
+                }
+            }
+
+            var addedNames = outcome.Added.Select(p => p.DisplayName).ToList();
+            var failedNames = outcome.Failed.Select(f => f.Printer.DisplayName).ToList();
+            var printerResults = BuildPrinterResults(desired, plan, outcome);
+            var hasFailures = printerResults.Any(p => !p.Succeeded);
+            var reportStatus = hasFailures
+                ? SyncReportStatus.Partial
+                : desired.Authoritative ? SyncReportStatus.Synced : SyncReportStatus.Deferred;
+
+            if (desired.SyncId is { } reportId)
+            {
+                await TryReportAsync(new SyncReportDto(
+                    reportId,
+                    machineName,
+                    clientVersion,
+                    reportStatus,
+                    printerResults,
+                    DeviceId: deviceId), ct);
+            }
+
+            return new SyncResult(managed, addedNames, failedNames, reportStatus) { Failures = outcome.Failed };
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            if (desired?.SyncId is { } reportId)
+            {
+                await TryReportAsync(new SyncReportDto(
+                    reportId,
+                    machineName,
+                    clientVersion,
+                    SyncReportStatus.Failed,
+                    [],
+                    ex.Message,
+                    deviceId), ct);
+            }
+
+            throw;
+        }
+    }
+
+    private async Task TryReportAsync(SyncReportDto report, CancellationToken ct)
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeout.CancelAfter(TimeSpan.FromSeconds(3));
+        try
+        {
+            await _api.ReportAsync(report, timeout.Token);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            // The operational report has a deliberately short deadline. The
+            // printer work is already complete, so a slow dashboard endpoint
+            // must not hold up the user's tray sync.
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            // Reporting is observability only. It must never turn an otherwise
+            // successful printer reconciliation into a failed client sync.
+        }
+    }
+
+    private static IReadOnlyList<PrinterSyncResultDto> BuildPrinterResults(
+        SyncResponseDto desired,
+        ReconcileResult plan,
+        ApplyOutcome outcome)
+    {
+        var results = new List<PrinterSyncResultDto>();
+        var added = outcome.Added.ToDictionary(p => p.UncPath, StringComparer.OrdinalIgnoreCase);
+        var addFailures = outcome.Failed.ToDictionary(p => p.Printer.UncPath, StringComparer.OrdinalIgnoreCase);
+        var adopted = plan.ToAdopt.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var attemptedAdds = plan.ToAdd.Select(p => p.UncPath).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var printer in desired.Printers)
+        {
+            if (addFailures.TryGetValue(printer.UncPath, out var failure))
+            {
+                results.Add(new PrinterSyncResultDto(
+                    printer.DisplayName, printer.UncPath, PrinterSyncOperation.Installed,
+                    Succeeded: false, Error: failure.Message));
+            }
+            else if (added.ContainsKey(printer.UncPath))
+            {
+                results.Add(new PrinterSyncResultDto(
+                    printer.DisplayName, printer.UncPath, PrinterSyncOperation.Installed,
+                    Succeeded: true));
+            }
+            else if (adopted.Contains(printer.UncPath))
+            {
+                results.Add(new PrinterSyncResultDto(
+                    printer.DisplayName, printer.UncPath, PrinterSyncOperation.Adopted,
+                    Succeeded: true));
+            }
+            else if (!attemptedAdds.Contains(printer.UncPath))
+            {
+                results.Add(new PrinterSyncResultDto(
+                    printer.DisplayName, printer.UncPath, PrinterSyncOperation.Present,
+                    Succeeded: true));
             }
         }
 
-        foreach (var p in outcome.Added)
+        var forced = (desired.RemovePrinters ?? []).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var removalFailures = outcome.FailedRemovals.ToDictionary(r => r.UncPath, StringComparer.OrdinalIgnoreCase);
+        var removals = outcome.Removed.ToDictionary(r => r.UncPath, StringComparer.OrdinalIgnoreCase);
+        foreach (var unc in plan.ToRemove)
         {
-            if (seen.Add(p.UncPath))
+            var reason = forced.Contains(unc)
+                ? PrinterRemovalReason.GlobalRemoval
+                : PrinterRemovalReason.NoLongerAssigned;
+            if (removalFailures.TryGetValue(unc, out var failure))
             {
-                managed.Add(new ManagedPrinter(p.UncPath, PrinterOrigin.Created));
+                results.Add(new PrinterSyncResultDto(
+                    DisplayName: null, unc, PrinterSyncOperation.Removed,
+                    Succeeded: false, Error: failure.Message, RemovalReason: reason));
+            }
+            else if (removals.TryGetValue(unc, out var removal))
+            {
+                results.Add(new PrinterSyncResultDto(
+                    DisplayName: null, unc, PrinterSyncOperation.Removed,
+                    Succeeded: true, RemovalReason: reason, AlreadyAbsent: removal.AlreadyAbsent));
             }
         }
 
-        foreach (var unc in plan.ToAdopt)
-        {
-            if (seen.Add(unc))
-            {
-                managed.Add(new ManagedPrinter(unc, PrinterOrigin.Adopted));
-            }
-        }
-
-        var addedNames = outcome.Added.Select(p => p.DisplayName).ToList();
-        var failedNames = outcome.Failed.Concat(driverFailures).Select(f => f.Printer.DisplayName).Distinct().ToList();
-
-        return new SyncResult(managed, addedNames, failedNames) { Failures = outcome.Failed.Concat(driverFailures).ToList() };
+        return results;
     }
 }

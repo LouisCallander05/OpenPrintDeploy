@@ -1,14 +1,13 @@
 name: release
 
-# Builds self-contained Windows publishes (server + client tray) on tag push
-# and attaches the zipped artifacts to a GitHub Release.
+# Builds the server and client MSIs on tag push and attaches them to a GitHub Release.
 #
 #   git tag v0.2.0
 #   git push origin v0.2.0
 #
 # ...then watch the Actions tab; when green, the Release page has:
-#   OpenPrintDeploy.Server.msi           <- copy to the print server, install
-#   OpenPrintDeploy-client-win-x64.zip   <- deploy via Intune to endpoints
+#   OpenPrintDeploy.Server.msi           <- install on the print server
+#   OpenPrintDeploy.Client.msi           <- install on client devices
 
 on:
   push:
@@ -47,12 +46,11 @@ jobs:
       - name: Create Release + upload assets
         uses: softprops/action-gh-release@v2
         with:
-          # The server MSI is the primary artifact (it bundles the client). The
-          # bare client MSI is published too for admins who deploy via Intune with
-          # SERVER=/CERTTHUMBPRINT= properties rather than the dashboard download.
           files: |
             publish/OpenPrintDeploy.Server.msi
             publish/OpenPrintDeploy.Client.msi
+          fail_on_unmatched_files: true
           draft: false
-          prerelease: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          make_latest: ${{ contains(github.ref_name, '-') && 'false' || 'true' }}
           generate_release_notes: true

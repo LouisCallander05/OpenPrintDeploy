@@ -48,8 +48,8 @@
     </Feature>
 
     <!-- Install root: C:\Program Files\OpenPrintDeploy. The service's content
-         root resolves here, so the bundled client/ installer that the server
-         serves at /download/client is found relative to it (same as before). -->
+         root resolves here, so the bundled client MSI served at
+         /download/client-msi is found relative to it. -->
     <StandardDirectory Id="ProgramFiles64Folder">
       <Directory Id="INSTALLFOLDER" Name="OpenPrintDeploy" />
     </StandardDirectory>

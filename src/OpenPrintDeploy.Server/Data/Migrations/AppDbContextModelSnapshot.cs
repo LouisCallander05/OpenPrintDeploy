@@ -17,6 +17,197 @@ namespace OpenPrintDeploy.Server.Data.Migrations
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "8.0.10");
 
+            modelBuilder.Entity("OpenPrintDeploy.Server.Data.Entities.ClientActivityEntity", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<Guid>("ClientUserId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Error")
+                        .HasMaxLength(1024)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("OccurredAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PrinterDisplayName")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PrinterUncPath")
+                        .HasMaxLength(260)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Summary")
+                        .IsRequired()
+                        .HasMaxLength(512)
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid?>("SyncId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Type")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ClientUserId", "OccurredAt");
+
+                    b.ToTable("ClientActivities");
+                });
+
+            modelBuilder.Entity("OpenPrintDeploy.Server.Data.Entities.ClientDeviceEntity", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ClientVersion")
+                        .HasMaxLength(64)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("DeviceIdentifier")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("FirstSeenAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("LastSeenAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("MachineName")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("NormalizedMachineName")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DeviceIdentifier")
+                        .IsUnique();
+
+                    b.HasIndex("NormalizedMachineName");
+
+                    b.ToTable("ClientDevices");
+                });
+
+            modelBuilder.Entity("OpenPrintDeploy.Server.Data.Entities.ClientPrinterEntity", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("ClientUserId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("DisplayName")
+                        .HasMaxLength(128)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LastError")
+                        .HasMaxLength(1024)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LastOperation")
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("NormalizedUncPath")
+                        .IsRequired()
+                        .HasMaxLength(260)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("UncPath")
+                        .IsRequired()
+                        .HasMaxLength(260)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ClientUserId", "NormalizedUncPath")
+                        .IsUnique();
+
+                    b.ToTable("ClientPrinters");
+                });
+
+            modelBuilder.Entity("OpenPrintDeploy.Server.Data.Entities.ClientUserEntity", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("AssignedPrinterCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<Guid>("DeviceId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("FailedPrinterCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTimeOffset>("FirstSeenAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LastError")
+                        .HasMaxLength(1024)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("LastSeenAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset?>("LastSyncCompletedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid?>("LastSyncId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset?>("LastSyncStartedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("LastSyncStatus")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("NormalizedUsername")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("SyncedPrinterCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Username")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("DeviceId", "NormalizedUsername")
+                        .IsUnique();
+
+                    b.ToTable("ClientUsers");
+                });
+
             modelBuilder.Entity("OpenPrintDeploy.Server.Data.Entities.PrinterEntity", b =>
                 {
                     b.Property<Guid>("Id")
@@ -126,6 +317,39 @@ namespace OpenPrintDeploy.Server.Data.Migrations
                     b.ToTable("ZonePrinters", (string)null);
                 });
 
+            modelBuilder.Entity("OpenPrintDeploy.Server.Data.Entities.ClientActivityEntity", b =>
+                {
+                    b.HasOne("OpenPrintDeploy.Server.Data.Entities.ClientUserEntity", "ClientUser")
+                        .WithMany("Activities")
+                        .HasForeignKey("ClientUserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("ClientUser");
+                });
+
+            modelBuilder.Entity("OpenPrintDeploy.Server.Data.Entities.ClientPrinterEntity", b =>
+                {
+                    b.HasOne("OpenPrintDeploy.Server.Data.Entities.ClientUserEntity", "ClientUser")
+                        .WithMany("Printers")
+                        .HasForeignKey("ClientUserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("ClientUser");
+                });
+
+            modelBuilder.Entity("OpenPrintDeploy.Server.Data.Entities.ClientUserEntity", b =>
+                {
+                    b.HasOne("OpenPrintDeploy.Server.Data.Entities.ClientDeviceEntity", "Device")
+                        .WithMany("Users")
+                        .HasForeignKey("DeviceId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Device");
+                });
+
             modelBuilder.Entity("OpenPrintDeploy.Server.Data.Entities.ZoneRuleEntity", b =>
                 {
                     b.HasOne("OpenPrintDeploy.Server.Data.Entities.ZoneEntity", "Zone")
@@ -150,6 +374,18 @@ namespace OpenPrintDeploy.Server.Data.Migrations
                         .HasForeignKey("ZonesId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
+                });
+
+            modelBuilder.Entity("OpenPrintDeploy.Server.Data.Entities.ClientDeviceEntity", b =>
+                {
+                    b.Navigation("Users");
+                });
+
+            modelBuilder.Entity("OpenPrintDeploy.Server.Data.Entities.ClientUserEntity", b =>
+                {
+                    b.Navigation("Activities");
+
+                    b.Navigation("Printers");
                 });
 
             modelBuilder.Entity("OpenPrintDeploy.Server.Data.Entities.ZoneEntity", b =>

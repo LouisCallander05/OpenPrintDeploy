@@ -29,6 +29,8 @@ public sealed class WindowsPrinterApplier : IPrinterApplier
     {
         var added = new List<PrinterDto>();
         var failed = new List<PrinterApplyError>();
+        var removed = new List<PrinterRemovalResult>();
+        var failedRemovals = new List<PrinterRemovalError>();
 
         foreach (var printer in plan.ToAdd)
         {
@@ -60,11 +62,27 @@ public sealed class WindowsPrinterApplier : IPrinterApplier
         foreach (var unc in plan.ToRemove)
         {
             ct.ThrowIfCancellationRequested();
-            // Best-effort: a printer the user already removed isn't an error.
-            DeletePrinterConnection(unc);
+            if (DeletePrinterConnection(unc))
+            {
+                removed.Add(new PrinterRemovalResult(unc));
+                continue;
+            }
+
+            var error = Marshal.GetLastWin32Error();
+            // A stale managed-state entry is already converged and should be
+            // reported as such, not as a removal failure requiring attention.
+            if (error is 2 or 1801) // ERROR_FILE_NOT_FOUND / ERROR_INVALID_PRINTER_NAME
+            {
+                removed.Add(new PrinterRemovalResult(unc, AlreadyAbsent: true));
+            }
+            else
+            {
+                failedRemovals.Add(new PrinterRemovalError(
+                    unc, new Win32Exception(error).Message));
+            }
         }
 
-        return Task.FromResult(new ApplyOutcome(added, failed));
+        return Task.FromResult(new ApplyOutcome(added, failed, removed, failedRemovals));
     }
 
     public Task<IReadOnlyList<string>> EnumerateInstalledAsync(CancellationToken ct = default)

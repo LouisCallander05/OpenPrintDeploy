@@ -1,0 +1,258 @@
+@page "/clients/{Id:guid}"
+@rendermode InteractiveServer
+@attribute [Authorize(Policy = AuthPolicies.Admin)]
+@implements IAsyncDisposable
+@using OpenPrintDeploy.Server.Admin
+@using Microsoft.Extensions.Options
+@using OpenPrintDeploy.Server.Sync
+@inject ClientActivityAdminService ClientService
+@inject IOptions<ClientActivityOptions> ActivityOptions
+
+<PageTitle>@(_device?.MachineName ?? "Client") · Open Print Deploy</PageTitle>
+
+<p><a href="clients" class="text-decoration-none">← Back to clients</a></p>
+
+@if (_loading && _device is null)
+{
+    <p class="text-muted">Loading client…</p>
+}
+else if (_device is null)
+{
+    <div class="alert alert-warning">That client device was not found.</div>
+}
+else
+{
+    <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-3">
+        <div>
+            <div class="d-flex align-items-center gap-2">
+                <h1 class="mb-0">@_device.MachineName</h1>
+                <span class="badge @(IsOnline(_device.LastSeenAt) ? "text-bg-success" : "text-bg-secondary")">
+                    @(IsOnline(_device.LastSeenAt) ? "Online" : "Offline")
+                </span>
+            </div>
+            <div class="text-muted mt-1">
+                Last seen @Ago(_device.LastSeenAt) · client <code>@(_device.ClientVersion ?? "unknown")</code>
+            </div>
+        </div>
+        <button class="btn btn-sm btn-outline-primary" @onclick="LoadAsync" disabled="@_loading">Refresh</button>
+    </div>
+
+    <div class="row g-3 mb-4" style="max-width: 56rem;">
+        <div class="col-sm-4"><div class="card h-100"><div class="card-body">
+            <div class="h4 mb-0">@_device.Users.Count</div><div class="text-muted small">Users seen</div>
+        </div></div></div>
+        <div class="col-sm-4"><div class="card h-100"><div class="card-body">
+            <div class="h4 mb-0">@_device.Users.Sum(u => u.Printers.Count)</div><div class="text-muted small">Managed printers</div>
+        </div></div></div>
+        <div class="col-sm-4"><div class="card h-100"><div class="card-body">
+            <div class="h4 mb-0 @(_device.Users.Sum(u => u.FailedPrinterCount) > 0 ? "text-danger" : "text-success")">
+                @_device.Users.Sum(u => u.FailedPrinterCount)
+            </div><div class="text-muted small">Failures</div>
+        </div></div></div>
+    </div>
+
+    @if (_device.Users.Count == 0)
+    {
+        <p class="text-muted">No user syncs have been recorded for this device.</p>
+    }
+    else
+    {
+        @foreach (var user in _device.Users)
+        {
+            var removalHistory = _device.Activities
+                .Where(a => a.Username == user.Username && a.Type is "Printer removed" or "Removal failed")
+                .Take(25)
+                .ToList();
+
+            <section class="card mb-4">
+                <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
+                    <div>
+                        <strong>@user.Username</strong>
+                        <span class="badge ms-2 @SyncStatusClass(DisplayStatus(user))">@DisplayStatus(user)</span>
+                    </div>
+                    <span class="small text-muted">Last seen @Ago(user.LastSeenAt)</span>
+                </div>
+                <div class="card-body">
+                    <div class="row g-2 mb-3 small" style="max-width: 52rem;">
+                        <div class="col-sm-3"><span class="text-muted">Assigned</span><br /><strong>@user.AssignedPrinterCount</strong></div>
+                        <div class="col-sm-3"><span class="text-muted">Synced</span><br /><strong>@user.SyncedPrinterCount</strong></div>
+                        <div class="col-sm-3"><span class="text-muted">Failed</span><br /><strong class="@(user.FailedPrinterCount > 0 ? "text-danger" : null)">@user.FailedPrinterCount</strong></div>
+                        <div class="col-sm-3"><span class="text-muted">Completed</span><br /><strong>@(user.LastSyncCompletedAt is { } completed ? Ago(completed) : "not reported")</strong></div>
+                    </div>
+
+                    @if (!string.IsNullOrWhiteSpace(user.LastError))
+                    {
+                        <div class="alert alert-danger py-2">@user.LastError</div>
+                    }
+
+                    <h2 class="h5">Managed printers</h2>
+                    @if (user.Printers.Count == 0)
+                    {
+                        <p class="text-muted">No OpenPrintDeploy-managed printers are currently recorded.</p>
+                    }
+                    else
+                    {
+                        <div class="table-responsive mb-4">
+                            <table class="table table-sm align-middle">
+                                <thead><tr><th>Printer</th><th>Status</th><th>Last action</th><th>Updated</th></tr></thead>
+                                <tbody>
+                                    @foreach (var printer in user.Printers)
+                                    {
+                                        <tr>
+                                            <td>
+                                                <div>@(printer.DisplayName ?? "(name unavailable)")</div>
+                                                <code class="small text-muted">@printer.UncPath</code>
+                                                @if (!string.IsNullOrWhiteSpace(printer.LastError))
+                                                {
+                                                    <div class="small text-danger">@printer.LastError</div>
+                                                }
+                                            </td>
+                                            <td><span class="badge @PrinterStatusClass(printer.Status)">@printer.Status</span></td>
+                                            <td>@(printer.LastOperation ?? "Awaiting report")</td>
+                                            <td title="@printer.UpdatedAt.ToLocalTime().ToString("F")">@Ago(printer.UpdatedAt)</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+
+                    <h2 class="h5">Removal history</h2>
+                    @if (removalHistory.Count == 0)
+                    {
+                        <p class="text-muted mb-0">No printer removals have been reported for this user.</p>
+                    }
+                    else
+                    {
+                        <div class="table-responsive">
+                            <table class="table table-sm align-middle mb-0">
+                                <thead><tr><th>Printer</th><th>Result</th><th>When</th></tr></thead>
+                                <tbody>
+                                    @foreach (var activity in removalHistory)
+                                    {
+                                        <tr>
+                                            <td>
+                                                <div>@(activity.PrinterDisplayName ?? activity.PrinterUncPath ?? "Printer")</div>
+                                                @if (activity.PrinterUncPath is not null)
+                                                {
+                                                    <code class="small text-muted">@activity.PrinterUncPath</code>
+                                                }
+                                            </td>
+                                            <td>
+                                                <span class="badge @(activity.Type == "Removal failed" ? "text-bg-danger" : "text-bg-success")">@activity.Type</span>
+                                                <div class="small">@activity.Summary</div>
+                                                @if (activity.Error is not null) { <div class="small text-danger">@activity.Error</div> }
+                                            </td>
+                                            <td>@Ago(activity.OccurredAt)</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                </div>
+            </section>
+        }
+    }
+
+    <h2 class="h4">Recent activity</h2>
+    @if (_device.Activities.Count == 0)
+    {
+        <p class="text-muted">No activity has been recorded yet.</p>
+    }
+    else
+    {
+        <div class="list-group mb-4" style="max-width: 64rem;">
+            @foreach (var activity in _device.Activities.Take(50))
+            {
+                <div class="list-group-item">
+                    <div class="d-flex flex-wrap justify-content-between gap-2">
+                        <span><strong>@activity.Username</strong> · @activity.Summary</span>
+                        <span class="small text-muted">@Ago(activity.OccurredAt)</span>
+                    </div>
+                    @if (activity.Error is not null)
+                    {
+                        <div class="small text-danger mt-1">@activity.Error</div>
+                    }
+                </div>
+            }
+        </div>
+    }
+}
+
+@code {
+    private readonly CancellationTokenSource _dispose = new();
+    private ClientDeviceDetails? _device;
+    private bool _loading;
+
+    [Parameter] public Guid Id { get; set; }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await LoadAsync();
+        _ = AutoRefreshAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+        try { _device = await ClientService.GetDeviceAsync(Id, _dispose.Token); }
+        catch (OperationCanceledException) when (_dispose.IsCancellationRequested) { }
+        finally { _loading = false; }
+    }
+
+    private async Task AutoRefreshAsync()
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(15));
+        try
+        {
+            while (await timer.WaitForNextTickAsync(_dispose.Token))
+            {
+                await InvokeAsync(LoadAsync);
+            }
+        }
+        catch (OperationCanceledException) when (_dispose.IsCancellationRequested) { }
+    }
+
+    private bool IsOnline(DateTimeOffset value)
+        => DateTimeOffset.UtcNow - value <= TimeSpan.FromMinutes(
+            Math.Clamp(ActivityOptions.Value.OnlineWindowMinutes, 1, 1440));
+
+    private static string DisplayStatus(ClientUserDetails user)
+        => user.Status == "Syncing" && user.LastSyncStartedAt is { } started
+           && DateTimeOffset.UtcNow - started > TimeSpan.FromMinutes(2)
+            ? "Unreported"
+            : user.Status;
+
+    private static string SyncStatusClass(string status) => status switch
+    {
+        "Synced" => "text-bg-success",
+        "Syncing" => "text-bg-primary",
+        "Partial" or "Failed" => "text-bg-danger",
+        _ => "text-bg-warning",
+    };
+
+    private static string PrinterStatusClass(string status) => status switch
+    {
+        "Synced" => "text-bg-success",
+        "Pending" or "Removal pending" => "text-bg-primary",
+        "Failed" or "Removal failed" => "text-bg-danger",
+        _ => "text-bg-secondary",
+    };
+
+    private static string Ago(DateTimeOffset value)
+    {
+        var elapsed = DateTimeOffset.UtcNow - value;
+        if (elapsed < TimeSpan.FromMinutes(1)) return "just now";
+        if (elapsed < TimeSpan.FromHours(1)) return $"{(int)elapsed.TotalMinutes}m ago";
+        if (elapsed < TimeSpan.FromDays(1)) return $"{(int)elapsed.TotalHours}h ago";
+        return $"{(int)elapsed.TotalDays}d ago";
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        _dispose.Cancel();
+        _dispose.Dispose();
+        return ValueTask.CompletedTask;
+    }
+}

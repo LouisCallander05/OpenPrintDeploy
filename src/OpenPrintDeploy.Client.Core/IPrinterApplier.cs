@@ -23,12 +23,38 @@ public interface IPrinterApplier
 }
 
 /// <summary>The result of applying a plan: the adds that succeeded and the ones that failed.</summary>
-public sealed record ApplyOutcome(
-    IReadOnlyList<PrinterDto> Added,
-    IReadOnlyList<PrinterApplyError> Failed)
+public sealed record ApplyOutcome
 {
-    public static ApplyOutcome Empty { get; } = new([], []);
+    public ApplyOutcome(
+        IReadOnlyList<PrinterDto> added,
+        IReadOnlyList<PrinterApplyError> failed)
+        : this(added, failed, [], [])
+    {
+    }
+
+    public ApplyOutcome(
+        IReadOnlyList<PrinterDto> added,
+        IReadOnlyList<PrinterApplyError> failed,
+        IReadOnlyList<PrinterRemovalResult> removed,
+        IReadOnlyList<PrinterRemovalError> failedRemovals)
+    {
+        Added = added;
+        Failed = failed;
+        Removed = removed;
+        FailedRemovals = failedRemovals;
+    }
+
+    public IReadOnlyList<PrinterDto> Added { get; }
+    public IReadOnlyList<PrinterApplyError> Failed { get; }
+    public IReadOnlyList<PrinterRemovalResult> Removed { get; }
+    public IReadOnlyList<PrinterRemovalError> FailedRemovals { get; }
+
+    public static ApplyOutcome Empty { get; } = new([], [], [], []);
 }
 
 /// <summary>A single printer that failed to install, with the OS reason.</summary>
 public sealed record PrinterApplyError(PrinterDto Printer, string Message);
+
+public sealed record PrinterRemovalResult(string UncPath, bool AlreadyAbsent = false);
+
+public sealed record PrinterRemovalError(string UncPath, string Message);

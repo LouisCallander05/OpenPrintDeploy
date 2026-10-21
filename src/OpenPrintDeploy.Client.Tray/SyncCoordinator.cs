@@ -1,5 +1,8 @@
 using System.Net;
 using System.Net.Http;
+using System.Runtime.InteropServices;
+using System.Security.Cryptography;
+using System.Text;
 using OpenPrintDeploy.Client.Core;
 
 namespace OpenPrintDeploy.Client.Tray;
@@ -32,16 +35,23 @@ public sealed class SyncCoordinator : IDisposable
     private readonly TrayAuthenticator _auth;
     private readonly ManagedStateStore _state;
     private readonly string _machineName;
+    private readonly string? _deviceId;
+    private readonly string? _clientVersion;
     private readonly IReadOnlyList<string> _allowedPrintServers;
 
     private HttpClient? _http;
     private SyncOrchestrator? _orchestrator;
 
-    public SyncCoordinator(TrayAuthenticator auth, IReadOnlyList<string>? allowedPrintServers = null)
+    public SyncCoordinator(
+        TrayAuthenticator auth,
+        IReadOnlyList<string>? allowedPrintServers = null,
+        string? clientVersion = null)
     {
         _auth = auth;
         _state = new ManagedStateStore();
-        _machineName = Environment.MachineName;
+        _machineName = ResolvePhysicalDnsHostName(Environment.MachineName);
+        _deviceId = ResolveDeviceId();
+        _clientVersion = clientVersion;
         _allowedPrintServers = allowedPrintServers ?? [];
     }
 
@@ -135,7 +145,12 @@ public sealed class SyncCoordinator : IDisposable
     private async Task<SyncOutcome> SyncWithCurrentClientAsync(CancellationToken ct)
     {
         var managed = _state.Load();
-        var result = await _orchestrator!.SyncOnceAsync(_machineName, managed, ct);
+        var result = await _orchestrator!.SyncOnceAsync(
+            _machineName,
+            managed,
+            ct,
+            _clientVersion,
+            _deviceId);
         foreach (var failure in result.Failures)
             ClientLog.Error($"Printer sync: {failure.Printer.UncPath}: {failure.Message}");
         _state.Save(result.ManagedPrinters);
@@ -158,6 +173,59 @@ public sealed class SyncCoordinator : IDisposable
         _http = client;
         _orchestrator = new SyncOrchestrator(new SyncApiClient(_http), new WindowsPrinterApplier(_allowedPrintServers), new DriverServiceClient());
         return true;
+    }
+
+    private static string ResolvePhysicalDnsHostName(string fallback)
+    {
+        const int maxDnsHostNameLength = 255;
+        var capacity = (uint)(maxDnsHostNameLength + 1);
+        var buffer = new StringBuilder((int)capacity);
+        if (GetComputerNameEx(ComputerNameFormat.PhysicalDnsHostname, buffer, ref capacity))
+        {
+            var hostName = buffer.ToString().Trim();
+            if (!string.IsNullOrWhiteSpace(hostName))
+            {
+                return hostName;
+            }
+        }
+
+        return fallback;
+    }
+
+    private enum ComputerNameFormat
+    {
+        PhysicalDnsHostname = 5,
+    }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetComputerNameEx(
+        ComputerNameFormat nameType,
+        StringBuilder buffer,
+        ref uint size);
+
+    private static string? ResolveDeviceId()
+    {
+        try
+        {
+            using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(
+                @"SOFTWARE\Microsoft\Cryptography");
+            var machineGuid = key?.GetValue("MachineGuid") as string;
+            if (string.IsNullOrWhiteSpace(machineGuid))
+            {
+                return null;
+            }
+
+            // Do not send the Windows MachineGuid itself. Its SHA-256 digest is
+            // stable for this Windows installation but cannot reveal the source
+            // registry value in server logs or the activity database.
+            return Convert.ToHexString(SHA256.HashData(
+                Encoding.UTF8.GetBytes(machineGuid.Trim().ToUpperInvariant())));
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private void SwapClient(HttpClient client)
