@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.EntityFrameworkCore;
 using OpenPrintDeploy.Server.Data;
@@ -123,6 +124,19 @@ public sealed class SyncEndpointTests : IClassFixture<SyncEndpointTests.TestServ
         private readonly string _dbPath =
             Path.Combine(Path.GetTempPath(), $"opd-test-{Guid.NewGuid():N}.db");
 
+        protected override IHost CreateHost(IHostBuilder builder)
+        {
+            // Minimal-host startup reads HTTPS settings before deferred app-config
+            // callbacks run. Host config is passed as entry-point arguments, so
+            // disable provisioning before any machine certificate-store access.
+            builder.ConfigureHostConfiguration(config =>
+                config.AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    ["Https:Enabled"] = "false",
+                }));
+            return base.CreateHost(builder);
+        }
+
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             // WindowsServiceLifetime registers Event Log logging on Windows;
@@ -141,11 +155,6 @@ public sealed class SyncEndpointTests : IClassFixture<SyncEndpointTests.TestServ
                     ["Auth:Dev:DefaultUser"] = "hruser",
                     ["Directory:Stub:Users:hruser:0"] = "S-1-5-21-DEMO-HR",
                     ["Directory:Stub:Users:enguser:0"] = "S-1-5-21-DEMO-ENG",
-                    // Keep the in-process TestServer on plain HTTP. Without this, an
-                    // admin-rights host (e.g. a Windows CI runner) would provision a
-                    // cert, RequireHttps would turn on, and these HTTP requests would
-                    // get 307-redirected. In-memory config wins over appsettings.
-                    ["Https:Enabled"] = "false",
                 }));
         }
 

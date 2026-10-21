@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
 using OpenPrintDeploy.Server.Drivers;
+using OpenPrintDeploy.Server.Https;
 using OpenPrintDeploy.Shared.Sync;
 using Xunit;
 
@@ -12,6 +13,14 @@ public sealed class DriverEndpointTests : IClassFixture<SyncEndpointTests.TestSe
 {
     private readonly SyncEndpointTests.TestServerFactory _factory;
     public DriverEndpointTests(SyncEndpointTests.TestServerFactory factory) => _factory = factory;
+
+    [Fact]
+    public void TestHostDoesNotProvisionMachineCertificateOrRedirectHttp()
+    {
+        var https = _factory.Services.GetRequiredService<HttpsStatus>();
+        Assert.False(https.Enabled);
+        Assert.False(https.Enforced);
+    }
 
     [Theory]
     [InlineData("/drivers/manifest")]
@@ -29,7 +38,11 @@ public sealed class DriverEndpointTests : IClassFixture<SyncEndpointTests.TestSe
     [Fact]
     public async Task DeliveryRejectsPlainHttpEvenWithValidTicket()
     {
-        using var client = _factory.CreateClient();
+        using var client = _factory.CreateClient(new WebApplicationFactoryClientOptions
+        {
+            BaseAddress = new Uri("http://localhost"),
+            AllowAutoRedirect = false,
+        });
         var ticket = _factory.Services.GetRequiredService<DriverTickets>().Issue(@"\\printsrv01\HR-MFP-01");
         var response = await client.PostAsJsonAsync("/drivers/manifest", new PackageRequest(ticket));
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
