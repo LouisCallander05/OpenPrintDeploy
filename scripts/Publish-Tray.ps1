@@ -144,4 +144,17 @@ Copy-Item -Force -LiteralPath $cleanupExe -Destination (Join-Path $trayDir "Open
 Remove-Item -Recurse -Force $cleanupTmp
 Write-Host "  Bundled OpenPrintDeploy.Client.Cleanup.exe into the tray folder."
 
-Write-Host "Tray published to $trayDir" -ForegroundColor Green
+# A separate single-file service avoids sharing/overwriting the WPF runtime.
+$serviceTmp = Join-Path $repoRoot "publish/client-service-tmp"
+Push-Location $repoRoot
+try {
+    & dotnet publish src/OpenPrintDeploy.Client.Service `
+        -c $Configuration -r $Runtime --self-contained true `
+        -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
+        @versionProps -o $serviceTmp
+    if ($LASTEXITCODE -ne 0) { throw "Driver service publish failed (exit $LASTEXITCODE)." }
+    Copy-Item -LiteralPath (Join-Path $serviceTmp "OpenPrintDeploy.Client.Service.exe") `
+        -Destination (Join-Path $trayDir "OpenPrintDeploy.Client.Service.exe") -Force
+}
+finally { Pop-Location }
+Write-Host "Tray and driver service published to $trayDir" -ForegroundColor Green

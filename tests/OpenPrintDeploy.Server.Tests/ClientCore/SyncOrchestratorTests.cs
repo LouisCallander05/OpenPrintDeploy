@@ -136,6 +136,49 @@ public sealed class SyncOrchestratorTests
         await Assert.ThrowsAsync<HttpRequestException>(() => orchestrator.SyncOnceAsync(null, []));
     }
 
+    [Fact]
+    public async Task Drivers_CheckExistingQueues_BlockFailedAdds_AndPreserveWorkingConnections()
+    {
+        var existing = new PrinterDto("Existing", @"\\srv\existing");
+        var failing = new PrinterDto("New", @"\\srv\new");
+        var good = new PrinterDto("Good", @"\\srv\good");
+        var applier = new RecordingApplier(installed: [existing.UncPath]);
+        var preparer = new RecordingDrivers([existing.UncPath, failing.UncPath]);
+        var orchestrator = new SyncOrchestrator(new SyncApiClient(StubHttpClient(new([existing, failing, good]))), applier, preparer);
+        var result = await orchestrator.SyncOnceAsync("PC", [Created(existing.UncPath)]);
+        Assert.Equal(3, preparer.Seen.Count);
+        Assert.Equal([good.UncPath], applier.Applied!.ToAdd.Select(p => p.UncPath));
+        Assert.Empty(applier.Applied.ToRemove);
+        Assert.Contains(result.ManagedPrinters, p => p.Unc == existing.UncPath);
+        Assert.DoesNotContain(result.ManagedPrinters, p => p.Unc == failing.UncPath);
+        Assert.Equal(["Existing", "New"], result.FailedNames);
+    }
+
+    [Fact]
+    public async Task Drivers_DoNotPrepareNonAuthoritativeOrExplicitlyRemovedQueues()
+    {
+        var printer = new PrinterDto("Removed", @"\\srv\removed");
+        foreach (var response in new[] { new SyncResponseDto([printer], Authoritative: false),
+            new SyncResponseDto([printer], RemovePrinters: [printer.UncPath]) })
+        {
+            var preparer = new RecordingDrivers([]);
+            var orchestrator = new SyncOrchestrator(new SyncApiClient(StubHttpClient(response)), new RecordingApplier(), preparer);
+            await orchestrator.SyncOnceAsync("PC", []);
+            Assert.Empty(preparer.Seen);
+        }
+    }
+
+    private sealed class RecordingDrivers(IReadOnlyList<string> failing) : IDriverPreparer
+    {
+        public IReadOnlyList<PrinterDto> Seen { get; private set; } = [];
+        public Task<IReadOnlyList<PrinterApplyError>> PrepareAsync(IReadOnlyList<PrinterDto> printers, CancellationToken ct)
+        {
+            Seen = printers;
+            return Task.FromResult<IReadOnlyList<PrinterApplyError>>(printers.Where(p => failing.Contains(p.UncPath))
+                .Select(p => new PrinterApplyError(p, "Driver rejected")).ToList());
+        }
+    }
+
     private static HttpClient StubHttpClient(SyncResponseDto response)
     {
         var message = new HttpResponseMessage(HttpStatusCode.OK)

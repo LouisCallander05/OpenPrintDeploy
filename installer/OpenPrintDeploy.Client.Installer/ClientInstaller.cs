@@ -35,11 +35,15 @@ internal static class ClientInstaller
         // next sign-in.
         Log("Stopping any running tray instances...");
         KillRunningTray();
+        DriverServiceRegistration.Stop();
         Thread.Sleep(1000);
 
         Log($"Installing files to {InstallDir}...");
         EnsureDirectory(InstallDir);
+        var settingsPath = Path.Combine(InstallDir, "appsettings.json");
+        var previousSettings = File.Exists(settingsPath) ? File.ReadAllText(settingsPath) : null;
         StageTrayFiles();
+        if (previousSettings is not null) File.WriteAllText(settingsPath, previousSettings);
 
         // Files that came out of a zip downloaded from the internet carry the
         // Mark-of-the-Web (a Zone.Identifier alternate data stream). The .NET
@@ -63,6 +67,7 @@ internal static class ClientInstaller
 
         Log($"Recording uninstall printer-removal policy ({(removeManagedPrintersOnUninstall ? "on" : "off")})...");
         SetRemoveOnUninstallPolicy(removeManagedPrintersOnUninstall);
+        DriverServiceRegistration.Install(InstallDir);
 
         Log("Starting the tray for the current session...");
         var started = UserSessionLauncher.TryLaunch(installedExe);
@@ -119,6 +124,7 @@ internal static class ClientInstaller
     {
         Log("Stopping any running tray instances...");
         KillRunningTray();
+        DriverServiceRegistration.Remove();
 
         // Gather managed printers for per-user removal BEFORE deleting the files
         // (the cleanup exe lives in InstallDir and copies itself to ProgramData).

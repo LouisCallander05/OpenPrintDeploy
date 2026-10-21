@@ -6,7 +6,10 @@ namespace OpenPrintDeploy.Client.Core;
 public sealed record SyncResult(
     IReadOnlyList<ManagedPrinter> ManagedPrinters,
     IReadOnlyList<string> AddedNames,
-    IReadOnlyList<string> FailedNames);
+    IReadOnlyList<string> FailedNames)
+{
+    public IReadOnlyList<PrinterApplyError> Failures { get; init; } = [];
+}
 
 /// <summary>
 /// One sync cycle: fetch the resolved set, diff against what we deployed last
@@ -19,11 +22,13 @@ public sealed class SyncOrchestrator
 {
     private readonly SyncApiClient _api;
     private readonly IPrinterApplier _applier;
+    private readonly IDriverPreparer? _drivers;
 
-    public SyncOrchestrator(SyncApiClient api, IPrinterApplier applier)
+    public SyncOrchestrator(SyncApiClient api, IPrinterApplier applier, IDriverPreparer? drivers = null)
     {
         _api = api;
         _applier = applier;
+        _drivers = drivers;
     }
 
     public async Task<SyncResult> SyncOnceAsync(
@@ -37,6 +42,15 @@ public sealed class SyncOrchestrator
             desired,
             previouslyManaged.Select(m => m.Unc).ToList(),
             currentlyInstalled);
+        // Check all assigned queues, including existing connections, for updates.
+        // Failed preparation must not cause working connections to be removed.
+        var driverFailures = _drivers is not null && desired.Authoritative
+            ? await _drivers.PrepareAsync(desired.Printers.Where(p =>
+                !plan.ToRemove.Contains(p.UncPath, StringComparer.OrdinalIgnoreCase)).ToList(), ct)
+            : [];
+        var blocked = driverFailures.Select(f => f.Printer.UncPath).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        plan = plan with { ToAdd = plan.ToAdd.Where(p => !blocked.Contains(p.UncPath)
+            && !plan.ToRemove.Contains(p.UncPath, StringComparer.OrdinalIgnoreCase)).ToList() };
         var outcome = await _applier.ApplyAsync(plan, ct);
 
         // Rebuild the managed set, preserving each printer's provenance. The
@@ -83,8 +97,8 @@ public sealed class SyncOrchestrator
         }
 
         var addedNames = outcome.Added.Select(p => p.DisplayName).ToList();
-        var failedNames = outcome.Failed.Select(f => f.Printer.DisplayName).ToList();
+        var failedNames = outcome.Failed.Concat(driverFailures).Select(f => f.Printer.DisplayName).Distinct().ToList();
 
-        return new SyncResult(managed, addedNames, failedNames);
+        return new SyncResult(managed, addedNames, failedNames) { Failures = outcome.Failed.Concat(driverFailures).ToList() };
     }
 }

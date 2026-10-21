@@ -15,16 +15,30 @@ This file is a public-facing summary mirrored for repo readers.
   installs/removes per-user printer connections (`AddPrinterConnection` /
   `DeletePrinterConnection`), and raises balloon toasts.
 - **OpenPrintDeploy.Shared** — DTOs and contracts shared by both sides.
+- **OpenPrintDeploy.Client.Service** — Local SYSTEM driver preparation service.
+  Receives scoped download tickets over a local named pipe, downloads signed
+  driver packages from the configured OPD HTTPS server, and installs them before
+  the tray adds a user connection. Checks existing assignments for updates too.
 
-## Why the tray app is sufficient
+## User assignments and privileged driver preparation
 
-The earlier design also called for a SYSTEM-context Worker service driving
-syncs via named-pipe IPC. We dropped it: `/sync` needs the *user's* group
-memberships to evaluate zones, and the user-session tray already
-authenticates as the user via Kerberos. A SYSTEM service would authenticate
-as the computer account — wrong identity for zone resolution. The tray runs
-per-user, owns the HTTP client, and does its own `Add-Printer` /
-`Remove-Printer` — no IPC needed.
+The tray authenticates `/sync` as the user because zone evaluation needs that
+user's group memberships. The SYSTEM service never resolves assignments.
+Authenticated HTTPS sync responses carry expiring, protected download tickets
+for assigned queues. The tray passes a queue and ticket to the service, which
+independently checks its machine-configured host allow-list and retrieves the
+manifest/package from its own configured HTTPS origin. User passwords, arbitrary
+URLs, filesystem paths and installation commands are not accepted over IPC.
+
+The server exports the queue's installed package from its local Driver Store
+using `pnputil /export-driver`. Clients verify the download hash and use
+`UploadPrinterDriverPackage` (signed packages only) followed by
+`InstallPrinterDriverFromPackage`. Driver updates are automatic on sync without
+a second approval. Windows print-driver restrictions remain enabled.
+
+All tray sync work runs off the UI thread, with one active cycle per tray.
+Clicking "Syncing… (show result)" requests feedback from the active cycle.
+See [driver delivery and pilot procedure](driver-delivery.md) for scope and limits.
 
 ## Auth
 
@@ -171,16 +185,14 @@ evaluation.
 ## Sync triggers
 
 - User logon
-- Every 60 minutes
+- Every 5 minutes by default (configurable)
 - Manual "Sync now" from tray
 
 ## Out of scope for v1
 
-- SYSTEM-context Worker service / named-pipe IPC — **rejected, not pending** (see
-  "Why the tray app is sufficient"). A SYSTEM service authenticates as the
-  computer account, which carries the wrong group memberships for user-zone
-  resolution. The per-user tray is the correct identity.
+- SYSTEM-context user-zone resolution: assignments remain in the user tray.
 - macOS / Linux client
-- Driver packaging (trust point-and-print)
+- Remote/split-server driver export, ARM64/x86 driver delivery, vendor EXE
+  installers, and automatic driver rollback.
 - Cost tracking, quotas, pull printing
 - Cloud-hosted server

@@ -19,6 +19,11 @@ public partial class App : Application
     private Forms.ToolStripMenuItem? _signInItem;
     private DispatcherTimer? _timer;
     private bool _isSignedIn;
+    private Forms.ToolStripMenuItem? _syncItem;
+    private Forms.ToolStripMenuItem? _syncStatusItem;
+    private bool _syncing;
+    private bool _manualFeedbackRequested;
+    private readonly CancellationTokenSource _shutdown = new();
 
     /// <summary>
     /// CLI flag the MSI's post-install action passes (as SYSTEM) to bring the
@@ -85,6 +90,7 @@ public partial class App : Application
         menu.Items.Add(_identityItem);
         _signInItem = new Forms.ToolStripMenuItem("Sign in…", null, async (_, _) =>
         {
+            if (_syncing) return;
             if (_isSignedIn)
             {
                 ClientLog.Info("User signed out");
@@ -105,7 +111,10 @@ public partial class App : Application
         menu.Items.Add(_signInItem);
         menu.Items.Add(new Forms.ToolStripSeparator());
 
-        menu.Items.Add("Sync now", null, async (_, _) => await SyncAsync(manual: true));
+        _syncItem = new Forms.ToolStripMenuItem("Sync now", null, async (_, _) => await SyncAsync(manual: true));
+        menu.Items.Add(_syncItem);
+        _syncStatusItem = new Forms.ToolStripMenuItem("Waiting for first sync") { Enabled = false };
+        menu.Items.Add(_syncStatusItem);
         menu.Items.Add(new Forms.ToolStripSeparator());
         menu.Items.Add($"Server: {settings.ServerBaseAddress}") .Enabled = false;
         menu.Items.Add($"Version: {GetVersion()}").Enabled = false;
@@ -167,8 +176,8 @@ public partial class App : Application
     /// (logon + the timer) pass false and stay completely silent — they never
     /// raise a notification, so the tray doesn't interrupt the user (and a fixed
     /// set of printers doesn't toast on every cycle). Only an explicit "Sync now"
-    /// shows feedback, and only on success — failures stay quiet so an offline
-    /// device doesn't nag.
+    /// shows feedback, including errors. Clicking during background sync requests
+    /// feedback from the current cycle without starting another one.
     /// </param>
     private async Task SyncAsync(bool manual = false)
     {
@@ -177,7 +186,43 @@ public partial class App : Application
             return;
         }
 
-        var outcome = await _coordinator.RunOnceAsync();
+        // All entry points are on the dispatcher. A click during background work
+        // subscribes to its result instead of starting a competing reconciliation.
+        _manualFeedbackRequested |= manual;
+        if (_syncing) return;
+        _syncing = true;
+        if (_syncItem is not null) _syncItem.Text = "Syncing… (show result)";
+        if (_syncStatusItem is not null) _syncStatusItem.Text = "Sync in progress";
+        if (_signInItem is not null) _signInItem.Enabled = false;
+        SyncOutcome outcome;
+        try
+        {
+            // Winspool, domain discovery and state I/O are synchronous even when
+            // their wrappers return Task. Keep the entire cycle off the UI thread.
+            outcome = await Task.Run(() => _coordinator.RunOnceAsync(_shutdown.Token));
+        }
+        catch (OperationCanceledException) when (_shutdown.IsCancellationRequested) { return; }
+        catch (Exception ex)
+        {
+            ClientLog.Error("Unexpected sync failure", ex);
+            outcome = SyncOutcome.Failure(ex.Message);
+        }
+        finally
+        {
+            _syncing = false;
+            if (!_shutdown.IsCancellationRequested)
+            {
+                if (_syncItem is not null) _syncItem.Text = "Sync now";
+                if (_signInItem is not null) _signInItem.Enabled = true;
+            }
+        }
+        if (_shutdown.IsCancellationRequested) return;
+        manual = _manualFeedbackRequested;
+        _manualFeedbackRequested = false;
+        if (_syncStatusItem is not null)
+            _syncStatusItem.Text = outcome.Ok && outcome.FailedNames.Count == 0
+                ? $"Last sync: {DateTime.Now:t}"
+                : $"Last sync needs attention ({DateTime.Now:t})";
 
         if (outcome.Ok)
         {
@@ -213,7 +258,7 @@ public partial class App : Application
             {
                 _notifyIcon.ShowBalloonTip(
                     6000, Branding.ProductName,
-                    $"{text} {outcome.FailedNames.Count} couldn’t be installed: "
+                    $"{text} {outcome.FailedNames.Count} need attention: "
                         + string.Join(", ", outcome.FailedNames),
                     Forms.ToolTipIcon.Warning);
             }
@@ -234,6 +279,7 @@ public partial class App : Application
     {
         ClientLog.Info("Shutting down");
         _timer?.Stop();
+        _shutdown.Cancel();
         if (_notifyIcon is not null)
         {
             _notifyIcon.Visible = false;
@@ -242,7 +288,9 @@ public partial class App : Application
         _trayIcon?.Dispose();
         _balloonIcon?.Dispose();
 
-        _coordinator?.Dispose();
+        // Process exit releases resources. Never dispose an HTTP client while
+        // its worker is still inside a non-cancellable Windows spooler call.
+        if (!_syncing) _coordinator?.Dispose();
         base.OnExit(e);
     }
 

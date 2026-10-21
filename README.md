@@ -20,8 +20,12 @@ is that brain.
 - **Zones** — admin-defined bundles of printers, gated on AD group, subnet,
   or computer OU. Any combination, any number of rules.
 
-Windows handles driver delivery itself (point-and-print). OpenPrintDeploy
-just tells clients which `\\server\share` UNCs to connect.
+OpenPrintDeploy can now prepare signed Windows x64 driver packages through its
+Local SYSTEM client service, automatically exporting them from the print server.
+See [driver delivery and pilot requirements](docs/driver-delivery.md) before
+deploying this first implementation. Older servers use Windows point-and-print.
+The tray connects the assigned `\\server\share` printers in each user's session
+after driver preparation.
 
 ## Status
 

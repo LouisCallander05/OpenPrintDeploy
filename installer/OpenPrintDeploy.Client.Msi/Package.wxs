@@ -81,6 +81,7 @@
       <ComponentGroupRef Id="TrayFiles" />
       <ComponentRef Id="TrayExeComponent" />
       <ComponentRef Id="CleanupExeComponent" />
+      <ComponentRef Id="DriverServiceComponent" />
       <ComponentRef Id="RemoveExeSettings" />
       <ComponentRef Id="ClientConfig" />
       <ComponentRef Id="AutoStartRunKey" />
@@ -113,10 +114,24 @@
       <Files Include="$(var.HarvestDir)\**">
         <Exclude Files="$(var.HarvestDir)\OpenPrintDeploy.Client.Tray.exe" />
         <Exclude Files="$(var.HarvestDir)\OpenPrintDeploy.Client.Cleanup.exe" />
+        <Exclude Files="$(var.HarvestDir)\OpenPrintDeploy.Client.Service.exe" />
       </Files>
     </ComponentGroup>
 
     <DirectoryRef Id="INSTALLFOLDER">
+      <Component Id="DriverServiceComponent" Bitness="always64">
+        <File Id="DriverServiceExe" Source="$(var.HarvestDir)\OpenPrintDeploy.Client.Service.exe" KeyPath="yes" />
+        <ServiceInstall Id="DriverServiceInstall" Name="OpenPrintDeployDrivers"
+                        DisplayName="Open Print Deploy Drivers"
+                        Description="Prepares signed printer drivers from the configured OpenPrintDeploy server."
+                        Type="ownProcess" Start="auto" ErrorControl="normal" Account="LocalSystem" Vital="yes">
+          <ServiceDependency Id="Spooler" />
+          <util:ServiceConfig FirstFailureActionType="restart" SecondFailureActionType="restart"
+                              ThirdFailureActionType="none" RestartServiceDelayInSeconds="60" ResetPeriodInDays="1" />
+        </ServiceInstall>
+        <ServiceControl Id="DriverServiceControl" Name="OpenPrintDeployDrivers"
+                        Start="install" Stop="both" Remove="uninstall" Wait="yes" />
+      </Component>
       <Component Id="TrayExeComponent" Bitness="always64">
         <File Id="TrayExe" Source="$(var.HarvestDir)\OpenPrintDeploy.Client.Tray.exe" KeyPath="yes" />
       </Component>
@@ -220,7 +235,7 @@
         Return="ignore" />
 
     <InstallExecuteSequence>
-      <Custom Action="LaunchTraySession" After="WriteRegistryValues" Condition="NOT REMOVE" />
+      <Custom Action="LaunchTraySession" After="StartServices" Condition="NOT REMOVE" />
       <Custom Action="GatherPrinterRemoval" Before="RemoveRegistryValues"
               Condition="(REMOVE=&quot;ALL&quot;) AND (NOT UPGRADINGPRODUCTCODE)" />
     </InstallExecuteSequence>

@@ -136,6 +136,8 @@ public sealed class SyncCoordinator : IDisposable
     {
         var managed = _state.Load();
         var result = await _orchestrator!.SyncOnceAsync(_machineName, managed, ct);
+        foreach (var failure in result.Failures)
+            ClientLog.Error($"Printer sync: {failure.Printer.UncPath}: {failure.Message}");
         _state.Save(result.ManagedPrinters);
         return SyncOutcome.Success(result.ManagedPrinters.Count, result.AddedNames, result.FailedNames);
     }
@@ -154,7 +156,7 @@ public sealed class SyncCoordinator : IDisposable
         }
 
         _http = client;
-        _orchestrator = new SyncOrchestrator(new SyncApiClient(_http), new WindowsPrinterApplier(_allowedPrintServers));
+        _orchestrator = new SyncOrchestrator(new SyncApiClient(_http), new WindowsPrinterApplier(_allowedPrintServers), new DriverServiceClient());
         return true;
     }
 
@@ -162,7 +164,7 @@ public sealed class SyncCoordinator : IDisposable
     {
         _http?.Dispose();
         _http = client;
-        _orchestrator = new SyncOrchestrator(new SyncApiClient(_http), new WindowsPrinterApplier(_allowedPrintServers));
+        _orchestrator = new SyncOrchestrator(new SyncApiClient(_http), new WindowsPrinterApplier(_allowedPrintServers), new DriverServiceClient());
     }
 
     public void Dispose() => _http?.Dispose();

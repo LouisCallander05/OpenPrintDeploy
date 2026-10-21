@@ -23,6 +23,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="System.ServiceProcess.ServiceController" Version="8.0.1" />
     <!-- Shared policy key names (RemoveManagedPrintersOnUninstall) so the installer
          and the cleanup tool agree on where the flag lives. -->
     <ProjectReference Include="..\..\src\OpenPrintDeploy.Client.Core\OpenPrintDeploy.Client.Core.csproj" />

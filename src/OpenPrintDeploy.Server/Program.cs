@@ -15,6 +15,8 @@ using OpenPrintDeploy.Server.Sync;
 using OpenPrintDeploy.Server.Updates;
 using OpenPrintDeploy.Server.Zones;
 using OpenPrintDeploy.Shared.Sync;
+using OpenPrintDeploy.Server.Drivers;
+using Microsoft.AspNetCore.DataProtection;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -142,6 +144,15 @@ builder.Services.AddScoped(sp =>
 
 builder.Services.AddScoped<ZoneRepository>();
 builder.Services.AddScoped<SyncHandler>();
+var driverProtection = builder.Services.AddDataProtection();
+if (OperatingSystem.IsWindows() && !builder.Environment.IsDevelopment())
+{
+    var keyPath = OpenPrintDeploy.Shared.Drivers.PrivateDirectory.Create(Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "OpenPrintDeploy-DriverKeys"));
+    driverProtection.PersistKeysToFileSystem(new DirectoryInfo(keyPath)).ProtectKeysWithDpapi(protectToLocalMachine: true);
+}
+builder.Services.AddSingleton<DriverTickets>();
+builder.Services.AddSingleton<DriverPackages>();
 
 builder.Services.AddScoped<PrinterService>();
 builder.Services.AddScoped<RemovedPrinterService>();
@@ -206,6 +217,9 @@ builder.Services.AddCascadingAuthenticationState();
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.AddPolicy("drivers", context => RateLimitPartition.GetFixedWindowLimiter(
+        context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+        _ => new FixedWindowRateLimiterOptions { PermitLimit = 240, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
     options.AddPolicy("sync", context =>
         RateLimitPartition.GetFixedWindowLimiter(
             partitionKey: context.User.Identity?.Name ?? context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
@@ -268,6 +282,7 @@ var syncPolicy = new AuthorizationPolicyBuilder(clientScheme)
 app.MapPost("/sync", async (
     SyncRequestDto request,
     SyncHandler handler,
+    DriverTickets tickets,
     HttpContext http,
     CancellationToken ct) =>
 {
@@ -277,12 +292,16 @@ app.MapPost("/sync", async (
     }
 
     var response = await handler.HandleAsync(http.User, request.MachineName, ct);
+    if (http.Request.IsHttps && OperatingSystem.IsWindows() && response.Authoritative)
+        response = response with { Printers = response.Printers.Select(p => p with { DriverTicket = tickets.Issue(p.UncPath) }).ToList() };
     return Results.Ok(response);
 })
 .RequireAuthorization(syncPolicy)
 .RequireRateLimiting("sync")
 .WithMetadata(new RequestSizeLimitAttribute(1024)) // SyncRequestDto is ~50 bytes; 1 KB is plenty
 .DisableAntiforgery();
+
+app.MapDriverEndpoints();
 
 
 // Hands out the tray-client MSI, pre-named "OpenPrintDeploy - <host>.msi". Wrap
