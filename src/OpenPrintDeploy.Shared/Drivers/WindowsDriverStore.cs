@@ -110,10 +110,14 @@ public static class WindowsDriverStore
     [DllImport("setupapi.dll", EntryPoint = "SetupGetInfPublishedNameW", CharSet = CharSet.Unicode, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool SetupGetInfPublishedName(string storePath, StringBuilder publishedPath, uint size, out uint needed);
-    [DllImport("spoolss.dll", EntryPoint = "UploadPrinterDriverPackageW", CharSet = CharSet.Unicode)]
+    // These public client entry points are exported by winspool.drv. Binding to
+    // spoolss.dll instead throws EntryPointNotFoundException before installation.
+    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+    [DllImport("winspool.drv", EntryPoint = "UploadPrinterDriverPackageW", CharSet = CharSet.Unicode, ExactSpelling = true)]
     private static extern int UploadPrinterDriverPackage(string? server, string inf, string environment,
         uint flags, IntPtr window, StringBuilder destination, ref uint size);
-    [DllImport("spoolss.dll", EntryPoint = "InstallPrinterDriverFromPackageW", CharSet = CharSet.Unicode)]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+    [DllImport("winspool.drv", EntryPoint = "InstallPrinterDriverFromPackageW", CharSet = CharSet.Unicode, ExactSpelling = true)]
     private static extern int InstallPrinterDriverFromPackage(string? server, string inf, string name,
         string environment, uint flags);
 }

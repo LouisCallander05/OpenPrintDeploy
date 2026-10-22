@@ -226,12 +226,14 @@ public partial class App : Application
 
         if (outcome.Ok)
         {
-            var logMsg = $"Sync OK — {outcome.PrinterCount} printer(s)";
+            var logMsg = outcome.FailedNames.Count == 0 ? "Sync OK" : "Sync completed with failures";
+            logMsg += $" — {outcome.PrinterCount} printer(s) managed";
             if (outcome.AddedNames.Count > 0)
                 logMsg += $", {outcome.AddedNames.Count} added ({string.Join(", ", outcome.AddedNames)})";
             if (outcome.FailedNames.Count > 0)
                 logMsg += $", {outcome.FailedNames.Count} failed ({string.Join(", ", outcome.FailedNames)})";
-            ClientLog.Info(logMsg);
+            if (outcome.FailedNames.Count > 0) ClientLog.Warn(logMsg);
+            else ClientLog.Info(logMsg);
         }
         else
         {
@@ -246,11 +248,10 @@ public partial class App : Application
 
         if (outcome.Ok)
         {
-            // Report the total assigned printer count, not how many were
-            // (re)applied this cycle — "12 printers assigned" reads as the steady
-            // state, whereas "12 added" wrongly implies they were new each time.
+            // This is the managed set after apply, not the server's assigned set.
+            // Failed installations must not be presented as missing assignments.
             var count = outcome.PrinterCount;
-            var text = $"{count} printer{(count == 1 ? "" : "s")} assigned.";
+            var text = $"{count} printer{(count == 1 ? "" : "s")} managed.";
 
             // Some printers couldn't be installed (e.g. a conflict with an
             // orphaned printer) — say so rather than claim a clean sync.

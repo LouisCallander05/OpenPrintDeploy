@@ -65,15 +65,30 @@ internal sealed class DriverInstaller(ILogger<DriverInstaller> logger)
             var job = Path.Combine(work, "install.json");
             await File.WriteAllTextAsync(job, JsonSerializer.Serialize(manifest), ct);
             var start = new ProcessStartInfo(Path.Combine(AppContext.BaseDirectory, "OpenPrintDeploy.Client.Service.exe"))
-            { UseShellExecute = false, CreateNoWindow = true };
+            { UseShellExecute = false, CreateNoWindow = true, RedirectStandardError = true };
             start.ArgumentList.Add("--install-package");
             start.ArgumentList.Add(job);
             using var child = Process.Start(start) ?? throw new IOException("Could not start driver installer.");
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
             timeout.CancelAfter(TimeSpan.FromMinutes(2));
-            try { await child.WaitForExitAsync(timeout.Token); }
-            catch { if (!child.HasExited) child.Kill(true); await child.WaitForExitAsync(CancellationToken.None); throw; }
-            if (child.ExitCode != 0) throw new IOException($"Windows rejected the driver package (installer exit {child.ExitCode}).");
+            var errorTask = DriverProcessOutput.ReadDiagnosticAsync(child.StandardError, timeout.Token);
+            string diagnostic;
+            try
+            {
+                await child.WaitForExitAsync(timeout.Token);
+                diagnostic = await errorTask;
+            }
+            catch
+            {
+                if (!child.HasExited) child.Kill(true);
+                await child.WaitForExitAsync(CancellationToken.None);
+                timeout.Cancel();
+                try { await errorTask; } catch { /* Preserve the original failure. */ }
+                throw;
+            }
+            if (child.ExitCode != 0)
+                throw new IOException($"Driver installer failed (exit {child.ExitCode}, 0x{child.ExitCode:X8}): "
+                    + (string.IsNullOrWhiteSpace(diagnostic) ? "No diagnostic output was returned." : diagnostic));
             current = WindowsDriverStore.Find(manifest.DriverName);
             if (current is null || current.Version != manifest.Version || current.Date != manifest.Date)
                 throw new IOException("Installed driver does not match the print server version.");
