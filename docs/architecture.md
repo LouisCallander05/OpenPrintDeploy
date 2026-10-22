@@ -12,7 +12,7 @@ This file is a public-facing summary mirrored for repo readers.
 - **OpenPrintDeploy.Client.Tray** — WPF tray app running in each user's
   session. Authenticates to the server as the signed-in user (Kerberos via
   `UseDefaultCredentials`), fetches the resolved printer set from `/sync`,
-  installs/removes per-user printer connections (`AddPrinterConnection` /
+  installs/removes per-user printer connections (`AddPrinterConnection2W` /
   `DeletePrinterConnection`), and raises balloon toasts.
 - **OpenPrintDeploy.Shared** — DTOs and contracts shared by both sides.
 - **OpenPrintDeploy.Client.Service** — Local SYSTEM driver preparation service.
@@ -35,6 +35,12 @@ using `pnputil /export-driver`. Clients verify the download hash and use
 `UploadPrinterDriverPackage` (signed packages only) followed by
 `InstallPrinterDriverFromPackage`. Driver updates are automatic on sync without
 a second approval. Windows print-driver restrictions remain enabled.
+
+After preparation, the service returns the verified local driver identity.
+The tray rechecks it and binds the user connection to that local driver for
+rendering, with interactive installation disabled. Publisher trust must already
+be established by machine policy; OPD does not add driver signing certificates
+to trust stores automatically.
 
 All tray sync work runs off the UI thread, with one active cycle per tray.
 Clicking "Syncing… (show result)" requests feedback from the active cycle.

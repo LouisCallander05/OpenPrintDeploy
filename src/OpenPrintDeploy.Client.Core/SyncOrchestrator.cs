@@ -1,4 +1,5 @@
 using OpenPrintDeploy.Shared.Sync;
+using OpenPrintDeploy.Shared.Drivers;
 
 namespace OpenPrintDeploy.Client.Core;
 
@@ -58,14 +59,16 @@ public sealed class SyncOrchestrator
                 previouslyManaged.Select(m => m.Unc).ToList(),
                 currentlyInstalled);
             // Prepare drivers for existing queues too, so server updates reach clients.
-            var driverFailures = _drivers is not null && desired.Authoritative
+            var preparation = _drivers is not null && desired.Authoritative
                 ? await _drivers.PrepareAsync(desired.Printers.Where(p =>
                     !plan.ToRemove.Contains(p.UncPath, StringComparer.OrdinalIgnoreCase)).ToList(), ct)
-                : [];
+                : new DriverPreparationOutcome([], new Dictionary<string, PreparedDriver>(StringComparer.OrdinalIgnoreCase));
+            var driverFailures = preparation.Failures;
             var blocked = driverFailures.Select(f => f.Printer.UncPath)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
             plan = plan with
             {
+                PreparedDrivers = preparation.Drivers,
                 ToAdd = plan.ToAdd.Where(p => !blocked.Contains(p.UncPath)
                     && !plan.ToRemove.Contains(p.UncPath, StringComparer.OrdinalIgnoreCase)).ToList()
             };

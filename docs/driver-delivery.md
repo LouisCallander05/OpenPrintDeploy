@@ -13,8 +13,10 @@ drivers or department policy.
 
 ## Requirements and supported scope
 
-- Update the OPD server and client together. Older clients ignore download
-  tickets; new clients preserve legacy behavior when an old server sends none.
+- Driver delivery requires a 0.10 server and client. The beta.4 client works
+  with beta.2/beta.3 servers; this fix requires only a client upgrade. Older
+  clients ignore download tickets. With an older server, new clients attempt
+  normal Point and Print silently and report failure if elevation is needed.
 - OPD must run on the Windows print server hosting the queue. Its discovered
   UNC must match the registered printer UNC. Split-server queues are rejected
   by this first export implementation; adding a host to the allow-list alone
@@ -51,6 +53,30 @@ manifest and package only from the configured HTTPS origin, checks SHA-256 and
 length, extracts within private storage, and lets Windows validate the complete
 signed package. It never enables non-admin driver installation. A trusted
 server compromise or a faulty signed driver remains a fleet-wide risk.
+
+The service returns the installed driver's name, environment, version and date
+after verifying them. The tray rechecks that identity and creates the per-user
+connection with `AddPrinterConnection2W`, selecting the prepared local driver
+for rendering (`PRINTER_CONNECTION_MISMATCH`). Package updates remain the
+service's responsibility. Every connection attempt sets
+`PRINTER_CONNECTION_NO_UI`: a policy block becomes a reported failure instead
+of opening an administrator credential dialog. This flag alone does not make
+a blocked installation succeed. Validate rendering, finishing options and
+server-side accounting with each vendor driver in the pilot.
+
+Error `0x800F0242` means the package's Authenticode publisher is not yet trusted
+on the client. A signed package is not necessarily approved for silent install.
+An administrator must verify the actual package signing certificate and deploy
+the approved signer to **Local Computer > Trusted Publishers**, or choose an
+appropriately trusted driver package. For a lab GUI check, inspect the matching
+vendor package's `.cat` file under **Properties > Digital Signatures**, view
+the signing certificate and validate its chain and fingerprint before exporting
+the public certificate. Import the verified signer with `certlm.msc` on the test
+client into Trusted Publishers; for deployment use a computer GPO scoped to
+the pilot machines. Do not substitute the LDAPS CA certificate. OPD does not
+automatically trust certificates supplied by the print server or disable
+signature checks. See Microsoft's
+[Trusted Publishers documentation](https://learn.microsoft.com/en-us/windows-hardware/drivers/install/trusted-publishers-certificate-store).
 
 IPC accepts local authenticated users and denies network clients. Requests and
 downloads have size limits and deadlines. Driver installations are serialized

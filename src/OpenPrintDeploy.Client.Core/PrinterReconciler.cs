@@ -1,4 +1,5 @@
 using OpenPrintDeploy.Shared.Sync;
+using OpenPrintDeploy.Shared.Drivers;
 
 namespace OpenPrintDeploy.Client.Core;
 
@@ -15,7 +16,12 @@ namespace OpenPrintDeploy.Client.Core;
 public sealed record ReconcileResult(
     IReadOnlyList<PrinterDto> ToAdd,
     IReadOnlyList<string> ToRemove,
-    IReadOnlyList<string> ToAdopt);
+    IReadOnlyList<string> ToAdopt)
+{
+    // Only identities verified by the local service during this sync belong here.
+    public IReadOnlyDictionary<string, PreparedDriver> PreparedDrivers { get; init; }
+        = new Dictionary<string, PreparedDriver>(StringComparer.OrdinalIgnoreCase);
+}
 
 /// <summary>
 /// Pure diff between the server's desired printer set and the set this client

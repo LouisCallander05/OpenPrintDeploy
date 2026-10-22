@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using OpenPrintDeploy.Client.Core;
 using OpenPrintDeploy.Shared.Sync;
+using OpenPrintDeploy.Shared.Drivers;
 using Xunit;
 
 namespace OpenPrintDeploy.Server.Tests.ClientCore;
@@ -202,6 +203,9 @@ public sealed class SyncOrchestratorTests
         var result = await orchestrator.SyncOnceAsync("PC", [Created(existing.UncPath)]);
         Assert.Equal(3, preparer.Seen.Count);
         Assert.Equal([good.UncPath], applier.Applied!.ToAdd.Select(p => p.UncPath));
+        var prepared = Assert.Single(applier.Applied.PreparedDrivers);
+        Assert.Equal(good.UncPath, prepared.Key);
+        Assert.Equal(new PreparedDriver("Good", "Windows x64", 1, 2), prepared.Value);
         Assert.Empty(applier.Applied.ToRemove);
         Assert.Contains(result.ManagedPrinters, p => p.Unc == existing.UncPath);
         Assert.DoesNotContain(result.ManagedPrinters, p => p.Unc == failing.UncPath);
@@ -220,6 +224,24 @@ public sealed class SyncOrchestratorTests
             await orchestrator.SyncOnceAsync("PC", []);
             Assert.Empty(preparer.Seen);
         }
+    }
+
+    [Fact]
+    public async Task Drivers_PreparedIdentityIsNotReusedAfterLaterFailure()
+    {
+        var printer = new PrinterDto("Library", @"\\srv\library");
+        var failing = new List<string>();
+        var api = new SyncApiClient(new HttpClient(new ReportingHandler(new SyncResponseDto([printer])))
+            { BaseAddress = new Uri("http://localhost") });
+        var applier = new RecordingApplier();
+        var orchestrator = new SyncOrchestrator(api, applier, new RecordingDrivers(failing));
+        await orchestrator.SyncOnceAsync("PC", []);
+        Assert.Single(applier.Applied!.PreparedDrivers);
+
+        failing.Add(printer.UncPath);
+        await orchestrator.SyncOnceAsync("PC", []);
+        Assert.Empty(applier.Applied!.PreparedDrivers);
+        Assert.Empty(applier.Applied.ToAdd);
     }
 
     [Theory]
@@ -250,11 +272,13 @@ public sealed class SyncOrchestratorTests
     private sealed class RecordingDrivers(IReadOnlyList<string> failing) : IDriverPreparer
     {
         public IReadOnlyList<PrinterDto> Seen { get; private set; } = [];
-        public Task<IReadOnlyList<PrinterApplyError>> PrepareAsync(IReadOnlyList<PrinterDto> printers, CancellationToken ct)
+        public Task<DriverPreparationOutcome> PrepareAsync(IReadOnlyList<PrinterDto> printers, CancellationToken ct)
         {
             Seen = printers;
-            return Task.FromResult<IReadOnlyList<PrinterApplyError>>(printers.Where(p => failing.Contains(p.UncPath))
-                .Select(p => new PrinterApplyError(p, "Driver rejected")).ToList());
+            return Task.FromResult(new DriverPreparationOutcome(printers.Where(p => failing.Contains(p.UncPath))
+                .Select(p => new PrinterApplyError(p, "Driver rejected")).ToList(),
+                printers.Where(p => !failing.Contains(p.UncPath)).ToDictionary(p => p.UncPath,
+                    p => new PreparedDriver(p.DisplayName, "Windows x64", 1, 2), StringComparer.OrdinalIgnoreCase)));
         }
     }
 

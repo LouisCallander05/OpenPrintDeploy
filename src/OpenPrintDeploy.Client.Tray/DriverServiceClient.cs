@@ -9,13 +9,18 @@ namespace OpenPrintDeploy.Client.Tray;
 
 public sealed class DriverServiceClient : IDriverPreparer
 {
-    public async Task<IReadOnlyList<PrinterApplyError>> PrepareAsync(IReadOnlyList<PrinterDto> printers, CancellationToken ct)
+    public async Task<DriverPreparationOutcome> PrepareAsync(IReadOnlyList<PrinterDto> printers, CancellationToken ct)
     {
         var failures = new List<PrinterApplyError>();
+        var drivers = new Dictionary<string, PreparedDriver>(StringComparer.OrdinalIgnoreCase);
         foreach (var printer in printers.DistinctBy(p => p.UncPath, StringComparer.OrdinalIgnoreCase))
         {
-            // Older servers continue their existing Point and Print behavior.
-            if (string.IsNullOrEmpty(printer.DriverTicket)) continue;
+            // Older servers use silent Point and Print without a prepared identity.
+            if (string.IsNullOrEmpty(printer.DriverTicket))
+            {
+                ClientLog.Info($"Driver preparation skipped for {printer.UncPath}: server supplied no driver ticket.");
+                continue;
+            }
             try
             {
                 using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -26,6 +31,12 @@ public sealed class DriverServiceClient : IDriverPreparer
                 await DriverWire.WriteAsync(pipe, new DriverRequest(printer.UncPath, printer.DriverTicket), timeout.Token);
                 var result = await DriverWire.ReadAsync<DriverResponse>(pipe, timeout.Token);
                 if (!result.Ready) failures.Add(new(printer, result.Error ?? "Driver service could not prepare the driver."));
+                else if (result.Driver is { } driver)
+                {
+                    drivers[printer.UncPath] = driver;
+                    ClientLog.Info($"Driver ready for {printer.UncPath}: {driver.Name}, version {driver.Version}.");
+                }
+                else ClientLog.Warn($"Driver service returned no local driver identity for {printer.UncPath}; update the client service.");
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
             catch (Exception ex) when (ex is IOException or TimeoutException or OperationCanceledException or System.Text.Json.JsonException)
@@ -34,6 +45,6 @@ public sealed class DriverServiceClient : IDriverPreparer
             }
         }
         foreach (var failure in failures) ClientLog.Error($"Driver preparation for {failure.Printer.UncPath}: {failure.Message}");
-        return failures;
+        return new(failures, drivers);
     }
 }

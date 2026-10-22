@@ -35,7 +35,7 @@ internal sealed class DriverInstaller(ILogger<DriverInstaller> logger)
         if (current is not null && current.Environment == manifest.Environment
             && current.Version == manifest.Version && current.Date == manifest.Date
             && File.Exists(stamp) && (await File.ReadAllTextAsync(stamp, ct)).Equals(manifest.Sha256, StringComparison.OrdinalIgnoreCase))
-            return new(true);
+            return new(true, Driver: new(current.Name, current.Environment, current.Version, current.Date));
         var work = Path.Combine(root, Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(work);
         try
@@ -87,14 +87,16 @@ internal sealed class DriverInstaller(ILogger<DriverInstaller> logger)
                 throw;
             }
             if (child.ExitCode != 0)
-                throw new IOException($"Driver installer failed (exit {child.ExitCode}, 0x{child.ExitCode:X8}): "
+                throw new IOException(DriverInstallErrors.Describe(child.ExitCode)
+                    + $" Driver installer failed (exit {child.ExitCode}, 0x{child.ExitCode:X8}): "
                     + (string.IsNullOrWhiteSpace(diagnostic) ? "No diagnostic output was returned." : diagnostic));
             current = WindowsDriverStore.Find(manifest.DriverName);
-            if (current is null || current.Version != manifest.Version || current.Date != manifest.Date)
+            if (current is null || current.Environment != manifest.Environment
+                || current.Version != manifest.Version || current.Date != manifest.Date)
                 throw new IOException("Installed driver does not match the print server version.");
             await File.WriteAllTextAsync(stamp, manifest.Sha256, ct);
             logger.LogInformation("Prepared {Driver} version {Version} for {Queue}", manifest.DriverName, manifest.Version, request.UncPath);
-            return new(true);
+            return new(true, Driver: new(current.Name, current.Environment, current.Version, current.Date));
         }
         finally { Directory.Delete(work, true); }
     }

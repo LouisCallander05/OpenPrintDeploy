@@ -1,13 +1,14 @@
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using OpenPrintDeploy.Client.Core;
+using OpenPrintDeploy.Shared.Drivers;
 using OpenPrintDeploy.Shared.Sync;
 
 namespace OpenPrintDeploy.Client.Tray;
 
 /// <summary>
 /// Applies the reconciled printer set in the user's session via the Win32
-/// spooler. <c>AddPrinterConnection</c>/<c>DeletePrinterConnection</c> write to
+/// spooler. <c>AddPrinterConnection2</c>/<c>DeletePrinterConnection</c> write to
 /// the per-user (HKCU) connection list, which is why this must run in the user
 /// context (the tray) rather than the SYSTEM service.
 /// </summary>
@@ -48,14 +49,15 @@ public sealed class WindowsPrinterApplier : IPrinterApplier
             // Best-effort per printer: a single failed add (a name clash with an
             // orphaned printer, an unreachable server, a point-and-print block)
             // must not stop the rest of the set from installing.
-            if (AddPrinterConnection(printer.UncPath))
+            try
             {
+                plan.PreparedDrivers.TryGetValue(printer.UncPath, out var driver);
+                WindowsPrinterConnection.Add(printer.UncPath, driver);
                 added.Add(printer);
             }
-            else
+            catch (Exception ex) when (ex is Win32Exception or InvalidOperationException)
             {
-                var reason = new Win32Exception(Marshal.GetLastWin32Error()).Message;
-                failed.Add(new PrinterApplyError(printer, reason));
+                failed.Add(new PrinterApplyError(printer, ex.Message));
             }
         }
 
@@ -140,9 +142,6 @@ public sealed class WindowsPrinterApplier : IPrinterApplier
             Marshal.FreeHGlobal(buffer);
         }
     }
-
-    [DllImport("winspool.drv", CharSet = CharSet.Unicode, SetLastError = true)]
-    private static extern bool AddPrinterConnection(string pName);
 
     [DllImport("winspool.drv", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern bool EnumPrinters(uint flags, string? name, uint level, IntPtr pPrinterEnum, uint cbBuf, ref uint pcbNeeded, ref uint pcReturned);
