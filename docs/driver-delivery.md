@@ -60,7 +60,12 @@ for rendering (`PRINTER_CONNECTION_MISMATCH`). Package updates remain the
 service's responsibility. Every connection attempt sets
 `PRINTER_CONNECTION_NO_UI`: a policy block becomes a reported failure instead
 of opening an administrator credential dialog. This flag alone does not make
-a blocked installation succeed. Validate rendering, finishing options and
+a blocked installation succeed. Since 0.10.3, an explicit prepared-driver
+connection returning error 3012 is retried once using standard Windows driver
+selection, still with `PRINTER_CONNECTION_NO_UI`. Other errors are not retried
+through this fallback. A missing or changed prepared driver still blocks both
+attempts. Logs identify a successful fallback or report the final error if both
+attempts fail. Validate rendering, finishing options and
 server-side accounting with each vendor driver in the pilot.
 
 Error `0x800F0242` means the package's Authenticode publisher is not yet trusted
@@ -82,7 +87,11 @@ downloads have size limits and deadlines. Driver installations are serialized
 across user sessions. Native package installation runs in a separate process
 with a two-minute deadline. The tray has a five-minute per-queue deadline; busy
 or unavailable service requests fail visibly on manual sync and retry on the
-next cycle. Windows spooler operations are not transactionally reversible:
+next cycle. Since 0.10.3, the service waits for the client to read the response
+and close its connection before disconnecting and reusing the pipe, within the
+existing ten-second response deadline. This avoids discarding unread responses
+while keeping the first pipe instance reserved against name squatting.
+Windows spooler operations are not transactionally reversible:
 timing out cannot guarantee that a spooler operation has not already committed.
 The service does not automatically restart the spooler or roll back drivers.
 
