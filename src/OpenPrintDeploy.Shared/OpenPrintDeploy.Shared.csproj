@@ -6,4 +6,7 @@
     <AssemblyName>OpenPrintDeploy.Shared</AssemblyName>
   </PropertyGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="OpenPrintDeploy.Server.Tests" />
+  </ItemGroup>
 </Project>

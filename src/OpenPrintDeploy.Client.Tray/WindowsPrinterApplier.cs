@@ -52,7 +52,8 @@ public sealed class WindowsPrinterApplier : IPrinterApplier
             try
             {
                 plan.PreparedDrivers.TryGetValue(printer.UncPath, out var driver);
-                WindowsPrinterConnection.Add(printer.UncPath, driver);
+                if (WindowsPrinterConnection.Add(printer.UncPath, driver))
+                    ClientLog.Info($"Connected {printer.UncPath} using standard silent driver selection after explicit selection returned Win32 3012.");
                 added.Add(printer);
             }
             catch (Exception ex) when (ex is Win32Exception or InvalidOperationException)
