@@ -9,6 +9,7 @@
 @inject ZoneService ZoneService
 @inject PrinterService PrinterService
 @inject IDirectoryService Directory
+@implements IDisposable
 
 <PageTitle>Zones · Open Print Deploy</PageTitle>
 
@@ -173,6 +174,10 @@ else
     private bool _saving;
     private string? _error;
     private bool _groupCatalogLoaded;
+    private Task? _groupCatalogTask;
+    private int _groupSearchVersion;
+    private bool _disposed;
+    private readonly HashSet<RuleInput> _editedRules = [];
 
     // Initial load: only the DB-backed data the zones table needs, so it
     // renders immediately. The group-name labels (LDAP) are filled in after
@@ -189,13 +194,13 @@ else
         if (firstRender)
         {
             await ResolveZoneGroupNamesAsync();
-            StateHasChanged();
+            if (!_disposed) StateHasChanged();
         }
     }
 
     // Used after a save/delete to refresh in place. Name resolution is cached
     // in the directory service after the first load, so the inline call here is
-    // cheap; the catalog is only reloaded if the form is reopened.
+    // cheap; the catalog is reused for the lifetime of this page.
     private async Task ReloadAsync()
     {
         _zones = await ZoneService.GetAllAsync();
@@ -208,14 +213,14 @@ else
     /// first time the add/edit form is opened — instead of on every page load.
     /// Cached behind <see cref="_groupCatalogLoaded"/> for the page's lifetime.
     /// </summary>
-    private async Task EnsureGroupCatalogAsync()
+    private Task EnsureGroupCatalogAsync()
     {
         if (_groupCatalogLoaded)
         {
-            return;
+            return Task.CompletedTask;
         }
-        await LoadGroupsAsync();
-        _groupCatalogLoaded = true;
+        // Repeated Edit clicks share the same pending directory request.
+        return _groupCatalogTask ??= LoadGroupsAsync();
     }
 
     /// <summary>
@@ -260,9 +265,15 @@ else
         // the directory is reachable at all. SearchGroupsAsync gets re-called
         // per-keystroke from OnGroupInputAsync to widen the catalog as the
         // admin types — large directories never fit in a single fetch.
-        _groups = await Directory.SearchGroupsAsync(string.Empty, GroupSearchLimit);
-        AccumulateGroups(_groups);
-        _groupPlaceholder = _groups.Count > 0
+        var searchVersion = _groupSearchVersion;
+        var groups = await Directory.SearchGroupsAsync(string.Empty, GroupSearchLimit);
+        if (_disposed) return;
+        AccumulateGroups(groups);
+        _groupCatalogLoaded = true;
+        // A slow initial catalog must not replace newer typeahead results.
+        if (searchVersion != _groupSearchVersion) return;
+        _groups = groups;
+        _groupPlaceholder = groups.Count > 0
             ? "Start typing a group name…"
             : "Paste a group SID (S-1-5-21-…)";
     }
@@ -288,9 +299,12 @@ else
     /// </summary>
     private async Task OnGroupInputAsync(RuleInput rule)
     {
+        _editedRules.Add(rule);
+        var searchVersion = ++_groupSearchVersion;
         var typed = (rule.GroupName ?? string.Empty).Trim();
 
         _groupSearchCts?.Cancel();
+        _groupSearchCts?.Dispose();
         _groupSearchCts = new CancellationTokenSource();
         var token = _groupSearchCts.Token;
 
@@ -313,7 +327,7 @@ else
             // A new keystroke arrived; let that one's search be the winner.
             return;
         }
-        if (token.IsCancellationRequested)
+        if (token.IsCancellationRequested || _disposed || searchVersion != _groupSearchVersion)
         {
             return;
         }
@@ -325,6 +339,8 @@ else
 
     private async Task StartCreate()
     {
+        CancelGroupSearch();
+        _editedRules.Clear();
         _error = null;
         _editingId = null;
         _model = new ZoneInput { Rules = { new RuleInput() } };
@@ -335,7 +351,9 @@ else
     private async Task StartEditAsync(Guid id)
     {
         _error = null;
-        var zone = await ZoneService.GetAsync(id);
+        // The table already holds the zone, rules and printer assignments.
+        // Clone that snapshot so opening the editor needs no DB or LDAP round trip.
+        var zone = _zones?.FirstOrDefault(z => z.Id == id);
         if (zone is null)
         {
             _error = "That zone no longer exists.";
@@ -343,7 +361,8 @@ else
             return;
         }
 
-        await EnsureGroupCatalogAsync();
+        CancelGroupSearch();
+        _editedRules.Clear();
         _editingId = zone.Id;
         _model = new ZoneInput
         {
@@ -358,7 +377,6 @@ else
         foreach (var rule in _model.Rules.Where(r => !string.IsNullOrWhiteSpace(r.GroupSid)))
         {
             rule.GroupName = _sidToName.GetValueOrDefault(rule.GroupSid!)
-                ?? await Directory.ResolveGroupNameAsync(rule.GroupSid!)
                 ?? rule.GroupSid;
         }
         if (_model.Rules.Count == 0)
@@ -366,12 +384,52 @@ else
             _model.Rules.Add(new RuleInput());
         }
         _showForm = true;
+        // Blazor renders the visible form when this event first yields. LDAP
+        // only enriches the already editable snapshot; it never gates opening.
+        var model = _model;
+        await Task.WhenAll(EnsureGroupCatalogAsync(), RefreshRuleNamesAsync(model));
+    }
+
+    private async Task RefreshRuleNamesAsync(ZoneInput model)
+    {
+        var pending = model.Rules
+            .Where(r => !string.IsNullOrWhiteSpace(r.GroupSid) && r.GroupName == r.GroupSid)
+            .Select(r => (Rule: r, Sid: r.GroupSid!))
+            .ToList();
+        var resolved = await Task.WhenAll(pending.Select(async item =>
+            (item.Rule, item.Sid, Name: await Directory.ResolveGroupNameAsync(item.Sid))));
+        if (_disposed) return;
+        foreach (var (rule, sid, name) in resolved)
+        {
+            if (string.IsNullOrWhiteSpace(name)) continue;
+            AccumulateGroups([new DirectoryGroup(sid, name)]);
+            if (_showForm && ReferenceEquals(_model, model) && model.Rules.Contains(rule)
+                && !_editedRules.Contains(rule) && rule.GroupName == sid)
+            {
+                rule.GroupName = name;
+            }
+        }
     }
 
     private void CancelForm()
     {
+        CancelGroupSearch();
         _showForm = false;
         _error = null;
+    }
+
+    private void CancelGroupSearch()
+    {
+        ++_groupSearchVersion;
+        _groupSearchCts?.Cancel();
+        _groupSearchCts?.Dispose();
+        _groupSearchCts = null;
+    }
+
+    public void Dispose()
+    {
+        _disposed = true;
+        CancelGroupSearch();
     }
 
     private void TogglePrinter(Guid printerId, ChangeEventArgs e)

@@ -76,8 +76,8 @@ public sealed class AdminAccessEvaluator
             return false;
         }
 
-        // Prefer SIDs already on the token (Negotiate); fall back to a directory
-        // lookup (the Basic/dev path, where the principal carries only a name).
+        // Prefer SIDs copied from the Windows token (Negotiate or form login);
+        // fall back to the directory for identities without group claims (dev).
         var userSids = PrincipalGroups.FromPrincipal(user);
         if (userSids.Count == 0 && username.Length > 0)
         {

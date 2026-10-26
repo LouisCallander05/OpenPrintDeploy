@@ -234,6 +234,12 @@ Suggested detection rule (Registry):
 
 ### Identity & directory config
 
+- The admin UI uses an **HTTPS login page**. Sign in with `DOMAIN\username`
+  or a UPN and your domain password. Sessions last up to eight hours; use
+  **Sign out** to end one. A service restart requires signing in again.
+  Existing `Auth:AdminScheme=Basic` installations automatically use this page.
+  Explicit `Auth:AdminScheme=Negotiate` retains Windows SSO. Printer clients
+  continue using Windows authentication independently of browser sessions.
 - The service runs as **Local SYSTEM** by default — it authenticates to AD as
   the computer account (`PRINTSRV01$`). No LDAP bind password lives in config.
   To run as a domain service account instead, set the service's logon identity

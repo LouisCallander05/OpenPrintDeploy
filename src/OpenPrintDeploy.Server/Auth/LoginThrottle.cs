@@ -3,7 +3,7 @@ using System.Collections.Concurrent;
 namespace OpenPrintDeploy.Server.Auth;
 
 /// <summary>
-/// Per-username throttle for admin Basic sign-in. After a run of failures it
+/// Per-username throttle for admin form sign-in. After a run of failures it
 /// locks the username out for a cooldown during which credentials are NOT
 /// validated against AD at all — which both slows password-guessing and, more
 /// importantly, stops a guessing attack from driving the real AD account into
