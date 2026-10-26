@@ -182,6 +182,20 @@
       </Component>
     </DirectoryRef>
 
+    <!-- Migrate only the legacy ProgramData directory ACL before service start.
+         This elevated action accepts no path input, validates existing files,
+         and retains tighter permissions if subsequent installation rolls back.
+         It does not run during uninstall. -->
+    <CustomAction Id="UpgradeServerStorage"
+        FileRef="ServerExeFile"
+        ExeCommand="--upgrade-server-storage"
+        Execute="deferred"
+        Impersonate="no"
+        Return="check" />
+    <InstallExecuteSequence>
+      <Custom Action="UpgradeServerStorage" Before="StartServices" Condition="NOT REMOVE" />
+    </InstallExecuteSequence>
+
     <!-- Minimal GUI on double-click (license + progress + finish); silent
          `msiexec /i ... /quiet` still works for Intune/scripted installs. -->
     <ui:WixUI Id="WixUI_Minimal" />

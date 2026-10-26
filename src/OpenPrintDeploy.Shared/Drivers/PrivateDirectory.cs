@@ -8,6 +8,14 @@ namespace OpenPrintDeploy.Shared.Drivers;
 public static class PrivateDirectory
 {
     public static string Create(string path, bool allowUsersRead = false)
+        => CreateCore(path, allowUsersRead, migrateLegacyServerDirectory: false);
+
+    // Installer-only migration entry point. Callers must validate every sensitive
+    // existing file after securing the directory, before reading any of its data.
+    public static string CreateForServerUpgrade(string path)
+        => CreateCore(path, allowUsersRead: false, migrateLegacyServerDirectory: true);
+
+    private static string CreateCore(string path, bool allowUsersRead, bool migrateLegacyServerDirectory)
     {
         // Reject reparse points on every existing ancestor before ACL or file work.
         for (var parent = new DirectoryInfo(Path.GetFullPath(path)); parent is not null; parent = parent.Parent)
@@ -43,7 +51,8 @@ public static class PrivateDirectory
         if (!Equals(owner, new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null))
             && !Equals(owner, new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null)))
             throw new IOException("Driver directory must be owned by SYSTEM or Administrators.");
-        ValidateAccess(directory.GetAccessControl());
+        if (migrateLegacyServerDirectory) ValidateLegacyServerDirectoryAccess(directory.GetAccessControl());
+        else ValidateAccess(directory.GetAccessControl());
         directory.SetAccessControl(security);
         return directory.FullName;
     }
@@ -61,6 +70,12 @@ public static class PrivateDirectory
     }
 
     public static void ValidateAccess(FileSystemSecurity security)
+        => ValidateAccessCore(security, allowLegacyDirectoryWrite: false);
+
+    public static void ValidateLegacyServerDirectoryAccess(DirectorySecurity security)
+        => ValidateAccessCore(security, allowLegacyDirectoryWrite: true);
+
+    private static void ValidateAccessCore(FileSystemSecurity security, bool allowLegacyDirectoryWrite)
     {
         var system = new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null);
         var admins = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
@@ -73,11 +88,21 @@ public static class PrivateDirectory
         {
             if (rule.AccessControlType != AccessControlType.Allow || (rule.FileSystemRights & mutations) == 0) continue;
             if (Equals(rule.IdentityReference, system) || Equals(rule.IdentityReference, admins)) continue;
+            // Older servers inherited ProgramData's container-only Users Write
+            // rule. It permits file creation, but not deletion/replacement of
+            // the administrator-owned directory. Only the installer may adopt
+            // this precise legacy ACL, immediately replacing it with a private
+            // ACL. Explicit grants, Modify/FullControl and other writers fail.
+            if (allowLegacyDirectoryWrite
+                && rule.IdentityReference.Equals(new SecurityIdentifier(WellKnownSidType.BuiltinUsersSid, null))
+                && rule.IsInherited && rule.InheritanceFlags == InheritanceFlags.ContainerInherit
+                && rule.PropagationFlags == PropagationFlags.None
+                && (rule.FileSystemRights & ~(FileSystemRights.Synchronize | FileSystemRights.ReadPermissions)) == FileSystemRights.Write) continue;
             // Creator Owner applies only to new descendants; each sensitive file
             // is checked separately before opening it.
             if (rule.IdentityReference.Equals(new SecurityIdentifier(WellKnownSidType.CreatorOwnerSid, null))
                 && rule.PropagationFlags.HasFlag(PropagationFlags.InheritOnly)) continue;
-            throw new IOException("Protected storage permits writes by an untrusted identity.");
+            throw new IOException($"Protected storage permits writes by an untrusted identity: {rule.IdentityReference} ({rule.FileSystemRights}).");
         }
     }
 }

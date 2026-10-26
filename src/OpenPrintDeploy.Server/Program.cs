@@ -19,6 +19,23 @@ using OpenPrintDeploy.Server.Drivers;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Http.Connections;
 
+// The MSI runs this after files are installed and before StartServices. Normal
+// startup remains strict and never silently adopts legacy writable storage.
+if (args.Length == 1 && args[0] == "--upgrade-server-storage")
+{
+    try
+    {
+        if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("Windows is required.");
+        ServerStorageUpgrade.Run();
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine(ex);
+        Environment.ExitCode = 1;
+    }
+    return;
+}
+
 var builder = WebApplication.CreateBuilder(args);
 
 // Lets the same exe run as a console app (dev) or under the SCM as a Windows
@@ -473,7 +490,7 @@ static string DefaultConnectionString(IHostEnvironment env)
         Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
         "OpenPrintDeploy");
     OpenPrintDeploy.Shared.Drivers.PrivateDirectory.Create(dataDir);
-    foreach (var name in new[] { "app.db", "app.db-wal", "app.db-shm" })
+    foreach (var name in new[] { "app.db", "app.db-wal", "app.db-shm", "app.db-journal" })
         OpenPrintDeploy.Shared.Drivers.PrivateDirectory.ValidateExistingFile(Path.Combine(dataDir, name));
     return $"Data Source={Path.Combine(dataDir, "app.db")}";
 }
