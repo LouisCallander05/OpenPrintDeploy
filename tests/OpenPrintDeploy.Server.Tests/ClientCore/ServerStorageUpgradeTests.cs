@@ -13,7 +13,7 @@ public sealed class ServerStorageUpgradeTests(ITestOutputHelper output)
     [InlineData("O:BAG:SYD:(A;;FA;;;SY)(A;;FA;;;BA)(A;CIID;FW;;;BU)", true)]
     [InlineData("O:BAG:SYD:(A;;FA;;;SY)(A;;FA;;;BA)(A;CIID;0x116;;;BU)", true)]
     [InlineData("O:SYG:SYD:(A;;FA;;;SY)(A;;FA;;;BA)(A;CIID;0x100116;;;BU)", true)]
-    [InlineData("O:BAG:SYD:(A;;FA;;;SY)(A;;FA;;;BA)(A;CI;FW;;;BU)", false)]
+    [InlineData("O:BAG:SYD:(A;;FA;;;SY)(A;;FA;;;BA)(A;CI;FW;;;BU)", true)]
     [InlineData("O:BAG:SYD:(A;;FA;;;SY)(A;;FA;;;BA)(A;CIID;FA;;;BU)", false)]
     [InlineData("O:BAG:SYD:(A;;FA;;;SY)(A;;FA;;;BA)(A;OICIID;FW;;;BU)", false)]
     [InlineData("O:BAG:SYD:(A;;FA;;;SY)(A;;FA;;;BA)(A;CIID;FW;;;AU)", false)]

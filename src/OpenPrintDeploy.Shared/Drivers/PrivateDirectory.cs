@@ -92,10 +92,12 @@ public static class PrivateDirectory
             // rule. It permits file creation, but not deletion/replacement of
             // the administrator-owned directory. Only the installer may adopt
             // this precise legacy ACL, immediately replacing it with a private
-            // ACL. Explicit grants, Modify/FullControl and other writers fail.
+            // ACL. Windows can materialize inherited rules as explicit copies;
+            // accept that equivalent rule too. Modify/FullControl, object-
+            // inheritable write grants and other writers still fail.
             if (allowLegacyDirectoryWrite
                 && rule.IdentityReference.Equals(new SecurityIdentifier(WellKnownSidType.BuiltinUsersSid, null))
-                && rule.IsInherited && rule.InheritanceFlags == InheritanceFlags.ContainerInherit
+                && rule.InheritanceFlags == InheritanceFlags.ContainerInherit
                 && rule.PropagationFlags == PropagationFlags.None
                 && (rule.FileSystemRights & ~(FileSystemRights.Synchronize | FileSystemRights.ReadPermissions)) == FileSystemRights.Write) continue;
             // Creator Owner applies only to new descendants; each sensitive file
