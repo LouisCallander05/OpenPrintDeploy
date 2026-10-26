@@ -5,6 +5,22 @@ namespace OpenPrintDeploy.Shared.Drivers;
 
 public static class DriverWire
 {
+    /// <summary>
+    /// Sends one response and waits for the existing client to close after reading it.
+    /// The caller must provide a bounded cancellation token before disconnecting the pipe.
+    /// </summary>
+    public static async Task WriteResponseAsync(Stream stream, DriverResponse response, CancellationToken ct)
+    {
+        await WriteAsync(stream, response, ct);
+        // DisconnectNamedPipe discards unread bytes. FlushAsync on a PipeStream
+        // does not wait for the reader, and WaitForPipeDrain cannot be cancelled.
+        // v1 clients already dispose their connection after reading the response,
+        // so waiting for EOF preserves compatibility without an unbounded wait.
+        var extra = new byte[1];
+        if (await stream.ReadAsync(extra, ct) != 0)
+            throw new InvalidDataException("Only one driver request is allowed per connection.");
+    }
+
     public static async Task WriteAsync<T>(Stream stream, T value, CancellationToken ct)
     {
         var bytes = JsonSerializer.SerializeToUtf8Bytes(value);

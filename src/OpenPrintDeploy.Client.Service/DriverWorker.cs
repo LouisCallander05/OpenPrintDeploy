@@ -46,7 +46,7 @@ internal sealed class DriverWorker(DriverInstaller installer, ILogger<DriverWork
                 }
                 using var writeTimeout = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
                 writeTimeout.CancelAfter(TimeSpan.FromSeconds(10));
-                await DriverWire.WriteAsync(pipe, response, writeTimeout.Token);
+                await DriverWire.WriteResponseAsync(pipe, response, writeTimeout.Token);
             }
             catch (Exception ex) when (!stoppingToken.IsCancellationRequested)
             {
