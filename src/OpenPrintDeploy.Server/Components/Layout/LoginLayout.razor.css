@@ -1,0 +1,27 @@
+.login-shell {
+    min-height: 100vh;
+    display: grid;
+    place-items: center;
+    padding: 2rem 1rem;
+    background: linear-gradient(135deg, #0b4070, #0e5e6b);
+}
+.login-card {
+    width: 100%;
+    max-width: 440px;
+    padding: 2.5rem;
+    background: white;
+    border-radius: 16px;
+    box-shadow: 0 16px 48px #001a3433;
+}
+.login-brand {
+    display: flex;
+    align-items: center;
+    gap: .75rem;
+    margin-bottom: 2rem;
+    color: #0b4070;
+    font-size: 1.25rem;
+    font-weight: 600;
+}
+@media (max-width: 480px) {
+    .login-card { padding: 1.5rem; }
+}

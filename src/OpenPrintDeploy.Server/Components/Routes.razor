@@ -4,7 +4,7 @@
             <NotAuthorized>
                 @if (context.User.Identity?.IsAuthenticated != true)
                 {
-                    <p class="p-4">You are not signed in.</p>
+                    <p class="p-4">Your session has ended. <a href="/login" data-enhance-nav="false">Sign in again</a>.</p>
                 }
                 else
                 {

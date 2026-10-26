@@ -10,7 +10,7 @@ namespace OpenPrintDeploy.Server.Auth;
 /// <c>X-Dev-User</c> request header, falling back to a configured default.
 /// Stands in for Negotiate on dev machines that have no Kerberos. Registered
 /// ONLY when <see cref="IHostEnvironment.IsDevelopment"/> (see
-/// <c>AuthExtensions.AddAppAuthentication</c>); production uses Basic/Negotiate
+/// <c>AuthExtensions.AddAppAuthentication</c>); production uses Forms/Negotiate
 /// and never sees this scheme. As a backstop, <c>Program</c> refuses to start if
 /// it finds itself running as a Windows service in the Development environment —
 /// the only way this header-spoof path could otherwise reach production.

@@ -11,7 +11,7 @@ namespace OpenPrintDeploy.Server.Auth;
 /// returned token carries the user's full group set across all trusted domains
 /// (the Kerberos PAC), exactly as a normal Windows sign-in would — so a
 /// cross-domain admin group resolves with no cross-domain LDAP. Windows-only; the
-/// admin Basic scheme is production-only (dev uses the header scheme).
+/// admin form login is production-only (dev uses the header scheme).
 /// </summary>
 [SupportedOSPlatform("windows")]
 internal static class WindowsLogon
@@ -23,15 +23,18 @@ internal static class WindowsLogon
     /// Returns a live <see cref="WindowsIdentity"/> on success (the caller owns it
     /// and must dispose it), or null when the credentials are rejected.
     /// </summary>
-    public static WindowsIdentity? Validate(string username, string password)
+    public static WindowsIdentity? Validate(string username, string password, out int errorCode)
     {
         SplitUserDomain(username, out var user, out var domain);
 
         if (!LogonUser(user, domain, password, LOGON32_LOGON_NETWORK, LOGON32_PROVIDER_DEFAULT, out var token))
         {
+            errorCode = Marshal.GetLastWin32Error();
+            token?.Dispose();
             return null;
         }
 
+        errorCode = 0;
         using (token)
         {
             // WindowsIdentity duplicates the token, so disposing `token` here is

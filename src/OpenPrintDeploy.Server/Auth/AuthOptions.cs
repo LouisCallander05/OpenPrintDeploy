@@ -10,12 +10,13 @@ public sealed class AuthOptions
 
     /// <summary>
     /// How the admin browser UI signs in (production only — dev always uses the
-    /// Dev header scheme). <c>Basic</c> prompts for a domain username/password
-    /// validated against AD; <c>Negotiate</c> is the legacy Windows-SSO behaviour.
+    /// Dev header scheme). <c>Forms</c> uses a domain login page and a secure
+    /// session cookie; legacy <c>Basic</c> settings also use Forms.
+    /// <c>Negotiate</c> is the optional Windows-SSO behaviour.
     /// This is the escape hatch: set it to <c>Negotiate</c> and restart to revert
     /// without reinstalling.
     /// </summary>
-    public string AdminScheme { get; set; } = "Basic";
+    public string AdminScheme { get; set; } = "Forms";
 
     public DevAuthOptions Dev { get; set; } = new();
 

@@ -23,7 +23,8 @@ public interface IDirectoryService
 
     /// <summary>
     /// Validates a domain username + password by attempting an LDAP bind as that
-    /// user — used by the admin UI's Basic authentication. Returns false on bad
+    /// user — an optional directory-provider operation. Admin form login uses
+    /// Windows LogonUser instead to obtain group claims. Returns false on bad
     /// credentials or any directory error (fail closed). The default returns
     /// false; real providers override it.
     /// </summary>

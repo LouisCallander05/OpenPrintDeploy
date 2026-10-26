@@ -17,6 +17,7 @@ using OpenPrintDeploy.Server.Zones;
 using OpenPrintDeploy.Shared.Sync;
 using OpenPrintDeploy.Server.Drivers;
 using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.Http.Connections;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -222,6 +223,9 @@ builder.Services.AddCascadingAuthenticationState();
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.AddPolicy("admin-login", context => RateLimitPartition.GetFixedWindowLimiter(
+        context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+        _ => new FixedWindowRateLimiterOptions { PermitLimit = 12, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
     options.AddPolicy("drivers", context => RateLimitPartition.GetFixedWindowLimiter(
         context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
         _ => new FixedWindowRateLimiterOptions { PermitLimit = 240, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
@@ -284,9 +288,10 @@ app.UseRateLimiter();
 app.UseAntiforgery();
 
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
+app.MapAdminLogin();
 
 // /sync authenticates clients with the client scheme (Negotiate in production,
-// Dev in development) — NOT the admin Basic scheme. This keeps Kerberos clients
+// Dev in development) — NOT the admin session scheme. This keeps Kerberos clients
 // working unchanged regardless of how the admin UI signs in.
 var clientScheme = app.Services.GetRequiredService<AuthSchemes>().Client;
 var syncPolicy = new AuthorizationPolicyBuilder(clientScheme)
@@ -388,7 +393,12 @@ app.MapGet("/download/client-msi", (IConfiguration cfg, IWebHostEnvironment env,
 .RequireAuthorization(AuthPolicies.Admin);
 
 app.MapRazorComponents<App>()
-    .AddInteractiveServerRenderMode();
+    .AddInteractiveServerRenderMode()
+    .Add(endpoint =>
+    {
+        foreach (var options in endpoint.Metadata.OfType<HttpConnectionDispatcherOptions>())
+            options.CloseOnAuthenticationExpiration = true;
+    });
 
 app.Run();
 

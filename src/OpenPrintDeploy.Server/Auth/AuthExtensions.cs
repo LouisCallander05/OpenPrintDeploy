@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.Negotiate;
 using Microsoft.AspNetCore.Authorization;
 
@@ -21,12 +22,28 @@ public static class AuthExtensions
         IHostEnvironment env)
     {
         services.Configure<AuthOptions>(configuration.GetSection(AuthOptions.SectionName));
+        services.AddMemoryCache();
+        services.AddSingleton<AdminSession>();
+        services.AddSingleton<IAdminCredentials, AdminCredentials>();
+        services.AddAuthentication().AddCookie(AdminSession.Scheme, options =>
+        {
+            options.Cookie.Name = "__Host-OpenPrintDeploy.Admin";
+            options.Cookie.HttpOnly = true;
+            options.Cookie.SecurePolicy = CookieSecurePolicy.Always;
+            options.Cookie.SameSite = SameSiteMode.Lax;
+            options.Cookie.Path = "/";
+            options.LoginPath = "/login";
+            options.AccessDeniedPath = "/access-denied";
+            options.ExpireTimeSpan = AdminSession.Lifetime;
+            options.SlidingExpiration = false;
+        });
+        services.AddOptions<CookieAuthenticationOptions>(AdminSession.Scheme)
+            .Configure<AdminSession>((options, store) => options.SessionStore = store);
 
         // Scheme choice is env-based (not a config read that would happen before
         // WebApplicationFactory's overrides apply). Dev: the header-based Dev
-        // handler for both the admin UI and /sync. Production: Basic for the
-        // admin browser UI (default scheme, so the UI authenticates + displays as
-        // the typed admin account) and Negotiate for the /sync client API. An
+        // handler for both the admin UI and /sync. Production: forms/cookies for
+        // the admin browser UI and Negotiate for the /sync client API. An
         // operator can fall back to legacy Windows-SSO admin via Auth:AdminScheme.
         string adminScheme;
         string clientScheme;
@@ -52,11 +69,10 @@ public static class AuthExtensions
             }
             else
             {
-                adminScheme = BasicAuthenticationHandler.SchemeName;
-                services.AddAuthentication(BasicAuthenticationHandler.SchemeName)
-                    .AddNegotiate()
-                    .AddScheme<AuthenticationSchemeOptions, BasicAuthenticationHandler>(
-                        BasicAuthenticationHandler.SchemeName, configureOptions: null);
+                // Existing installations with AdminScheme=Basic migrate to the
+                // login page too. Only an explicit Negotiate setting keeps SSO.
+                adminScheme = AdminSession.Scheme;
+                services.AddAuthentication(AdminSession.Scheme).AddNegotiate();
             }
         }
 

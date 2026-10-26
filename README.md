@@ -23,6 +23,11 @@ and keeps their printer connections in sync.
   server and self-signed certificate when required.
 - Use HTTPS by default, with either an automatically provisioned certificate or
   an administrator-supplied PFX.
+- Sign into the admin console with an HTTPS domain login page and sign out from
+  the header. Admin sessions last up to eight hours; client sync keeps Windows
+  Integrated Authentication.
+- Open zone editing immediately using cached zone data while directory group
+  labels load in the background.
 
 OpenPrintDeploy can now prepare signed Windows x64 driver packages through its
 Local SYSTEM client service, automatically exporting them from the print server.

@@ -1,0 +1,64 @@
+@page "/login"
+@attribute [AllowAnonymous]
+@layout LoginLayout
+@using OpenPrintDeploy.Server.Https
+@inject AuthSchemes Schemes
+@inject HttpsStatus Https
+
+<PageTitle>Sign in · Open Print Deploy</PageTitle>
+<h1 id="login-heading" class="h3 mb-2">Sign in</h1>
+<p class="text-muted mb-4">Use your domain account to manage printers and zones.</p>
+
+@if (Http?.Request.IsHttps != true)
+{
+    <div class="alert alert-warning" role="alert">Open the HTTPS address to sign in securely.</div>
+    @if (Https.Bound && Https.Port > 0 && Http is not null)
+    {
+        <a class="btn btn-primary w-100" href="@SecureLoginUrl" data-enhance-nav="false">Open secure sign in</a>
+    }
+}
+else if (Schemes.Admin != AdminSession.Scheme)
+{
+    <p>This server uses Windows sign-in. <a href="/" data-enhance-nav="false">Continue</a></p>
+}
+else
+{
+    @if (ErrorMessage is { } message)
+    {
+        <div class="alert alert-danger" role="alert">@message</div>
+    }
+    <form method="post" action="/auth/login" data-enhance="false">
+        <AntiforgeryToken />
+        <input type="hidden" name="returnUrl" value="@AdminLoginEndpoints.LocalReturnUrl(ReturnUrl)" />
+        <div class="mb-3">
+            <label for="username" class="form-label">Domain username</label>
+            <input id="username" name="username" class="form-control" autocomplete="username"
+                   placeholder="DOMAIN\username or user@domain" maxlength="256" required autofocus />
+        </div>
+        <div class="mb-4">
+            <label for="password" class="form-label">Password</label>
+            <input id="password" name="password" type="password" class="form-control"
+                   autocomplete="current-password" maxlength="1024" required />
+        </div>
+        <button type="submit" class="btn btn-primary w-100">Sign in</button>
+    </form>
+}
+
+@code {
+    [CascadingParameter] private HttpContext? Http { get; set; }
+    [SupplyParameterFromQuery] public string? Error { get; set; }
+    [SupplyParameterFromQuery] public string? ReturnUrl { get; set; }
+    private string SecureLoginUrl => new UriBuilder("https", Http!.Request.Host.Host, Https.Port, "/login").Uri.AbsoluteUri;
+    private string? ErrorMessage => Error switch
+    {
+        "credentials" => "The username or password wasn't recognised. Check your domain and try again.",
+        "throttled" => "Too many unsuccessful attempts. Wait five minutes before trying again.",
+        "unavailable" => "Windows couldn't complete domain sign-in. Try again shortly. If it continues, ask your administrator to check the server log and account status.",
+        "access" => "Your account was verified, but admin access could not be confirmed. Check your permissions or ask an administrator to check the directory connection.",
+        _ => null,
+    };
+    protected override void OnInitialized()
+    {
+        if (Http is not null) Http.Response.Headers.CacheControl = "no-store";
+    }
+}

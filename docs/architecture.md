@@ -48,7 +48,19 @@ See [driver delivery and pilot procedure](driver-delivery.md) for scope and limi
 
 ## Auth
 
-- Admin browser → server: Negotiate (Windows Integrated Auth)
+- Admin browser → server: HTTPS domain login form, validated once with Windows
+  `LogonUser`, followed by an encrypted, HttpOnly, Secure session cookie. Group
+  claims remain in the server's expiring ticket store. Sessions last at most
+  eight hours, end on service restart, and are removed on sign-out. Existing
+  `Auth:AdminScheme=Basic` settings migrate to forms; explicit `Negotiate`
+  retains Windows SSO. Passwords are not stored in sessions or logs.
+- Login and logout POSTs validate antiforgery tokens. Logins retain the
+  per-account failure throttle plus an IP rate limit. Domain-service failures
+  are logged with their Windows error code and do not count as bad passwords.
+- Native logon calls are bounded to four concurrent workers and a 20-second
+  response wait. Timed-out native work holds its slot until Windows returns.
+  Admin permission checks still apply after credential validation and on
+  protected requests; session group membership is a sign-in-time snapshot.
 - Client → server: Negotiate / Kerberos
 - Server → LDAP: Negotiate (Kerberos) using the server process identity. On a
   domain-joined print server running as Local SYSTEM that's the computer
@@ -58,7 +70,7 @@ See [driver delivery and pilot procedure](driver-delivery.md) for scope and limi
   binds and lookups aren't cleartext — requires a DC LDAPS cert the server
   trusts (standard with AD CS).
 - **Dev header auth** (`X-Dev-User`) is registered *only* in the Development
-  environment (`AuthExtensions`); production uses Basic/Negotiate. As a backstop
+  environment (`AuthExtensions`); production uses Forms/Negotiate. As a backstop
   the server refuses to start if it's running as a Windows service while
   `ASPNETCORE_ENVIRONMENT=Development` — the one way the header-spoof scheme
   could otherwise reach a production host.
