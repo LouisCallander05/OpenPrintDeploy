@@ -35,6 +35,10 @@ jobs:
         run: |
           $v = "${{ github.ref_name }}".TrimStart('v')
           echo "version=$v" >> $env:GITHUB_OUTPUT
+          $notesPath = "docs/releases/$v.md"
+          if (Test-Path -LiteralPath $notesPath) {
+            echo "notes=$notesPath" >> $env:GITHUB_OUTPUT
+          }
 
       - name: Build + test
         run: dotnet test OpenPrintDeploy.sln -c Release -p:NuGetAudit=true --nologo
@@ -53,4 +57,5 @@ jobs:
           draft: false
           prerelease: ${{ contains(github.ref_name, '-') }}
           make_latest: ${{ contains(github.ref_name, '-') && 'false' || 'true' }}
+          body_path: ${{ steps.ver.outputs.notes }}
           generate_release_notes: true
