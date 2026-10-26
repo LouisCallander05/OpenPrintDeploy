@@ -71,6 +71,9 @@ public sealed class ServerStorageUpgradeTests(ITestOutputHelper output)
             file.SetAccessControl(fileAcl);
 
             Assert.Throws<IOException>(() => { PrivateDirectory.Create(data.FullName); });
+            output.WriteLine("Legacy directory descriptor: " + data.GetAccessControl().GetSecurityDescriptorSddlForm(AccessControlSections.All & ~AccessControlSections.Audit));
+            foreach (FileSystemAccessRule rule in data.GetAccessControl().GetAccessRules(true, true, typeof(SecurityIdentifier)))
+                output.WriteLine($"{rule.IdentityReference}: rights={rule.FileSystemRights}, inherited={rule.IsInherited}, inheritance={rule.InheritanceFlags}, propagation={rule.PropagationFlags}");
             PrivateDirectory.CreateForServerUpgrade(data.FullName);
             PrivateDirectory.ValidateExistingFile(file.FullName);
             Assert.Equal("existing database canary", File.ReadAllText(file.FullName));
