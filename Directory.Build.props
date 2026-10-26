@@ -11,6 +11,10 @@
          TreatWarningsAsErrors. CI overrides this to true via `-p:NuGetAudit=true`
          on runners that have network. -->
     <NuGetAudit>false</NuGetAudit>
+    <NuGetAuditMode>all</NuGetAuditMode>
+    <!-- Self-contained installers carry their own runtime; patch it even when
+         the build machine's SDK defaults to an older servicing release. -->
+    <RuntimeFrameworkVersion Condition="'$(SelfContained)' == 'true'">8.0.33</RuntimeFrameworkVersion>
     <AnalysisLevel>latest</AnalysisLevel>
     <NeutralLanguage>en-US</NeutralLanguage>
     <Company>OpenPrintDeploy</Company>

@@ -8,7 +8,7 @@ namespace OpenPrintDeploy.Server.Auth;
 /// Decides whether a principal is an admin, from the effective grant set
 /// (appsettings break-glass ∪ the Settings-page store). Group grants are by
 /// NAME and resolved to SIDs via the directory; user grants match the
-/// normalised username. Shared by the authorization handler and the Settings
+/// full authenticated account name or primary user SID. Shared by authorization and the Settings
 /// page (which uses it to refuse a save that would lock the current admin out).
 /// </summary>
 public sealed class AdminAccessEvaluator
@@ -16,12 +16,15 @@ public sealed class AdminAccessEvaluator
     private readonly IDirectoryService _directory;
     private readonly AdminAccessStore _store;
     private readonly AdminAuthOptions _configured;
+    private readonly bool _development;
 
-    public AdminAccessEvaluator(IDirectoryService directory, AdminAccessStore store, IOptions<AuthOptions> options)
+    public AdminAccessEvaluator(IDirectoryService directory, AdminAccessStore store, IOptions<AuthOptions> options,
+        IHostEnvironment? environment = null)
     {
         _directory = directory;
         _store = store;
         _configured = options.Value.Admin;
+        _development = environment?.IsDevelopment() == true;
     }
 
     /// <summary>The persisted (editable) grants only.</summary>
@@ -57,16 +60,18 @@ public sealed class AdminAccessEvaluator
             return false;
         }
 
-        // First-run: nothing configured anywhere → any authenticated user.
+        // Bootstrap is limited to an administrator of the server. Development's
+        // stub identities are exempt; that scheme is never registered in production.
         if (access.IsOpen)
         {
-            return true;
+            return _development || PrincipalGroups.FromPrincipal(user).Contains("S-1-5-32-544");
         }
 
-        var username = DirectoryUsername.Normalize(user.Identity.Name ?? string.Empty);
+        var username = user.Identity.Name?.Trim() ?? string.Empty;
 
         if (username.Length > 0 && access.Users.Any(u =>
-                DirectoryUsername.Normalize(u).Equals(username, StringComparison.OrdinalIgnoreCase)))
+                u.Trim().Equals(username, StringComparison.OrdinalIgnoreCase)
+                || user.FindAll(ClaimTypes.PrimarySid).Any(c => c.Value.Equals(u.Trim(), StringComparison.Ordinal))))
         {
             return true;
         }
@@ -79,7 +84,7 @@ public sealed class AdminAccessEvaluator
         // Prefer SIDs copied from the Windows token (Negotiate or form login);
         // fall back to the directory for identities without group claims (dev).
         var userSids = PrincipalGroups.FromPrincipal(user);
-        if (userSids.Count == 0 && username.Length > 0)
+        if (_development && userSids.Count == 0 && username.Length > 0)
         {
             // Admin authorization fails closed: a directory outage yields an empty
             // set here and therefore no admin grant, which is the safe default.

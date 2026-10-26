@@ -56,6 +56,13 @@ public sealed class LdapDirectoryService : IDirectoryService
     public LdapDirectoryService(IOptions<DirectoryOptions> options, ILogger<LdapDirectoryService> logger)
     {
         _ldap = options.Value.Ldap;
+        if (_ldap.AllowInvalidCertificate)
+            throw new InvalidOperationException("LDAPS certificate validation cannot be disabled. Install the directory CA certificate instead.");
+        if (!_ldap.AuthMode.Equals("Basic", StringComparison.OrdinalIgnoreCase)
+            && !_ldap.AuthMode.Equals("Negotiate", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("LDAP AuthMode must be Basic or Negotiate.");
+        if (!_ldap.UseSsl && _ldap.AuthMode.Equals("Basic", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("LDAP Basic authentication requires TLS.");
         _logger = logger;
         _endpoint = new Lazy<Endpoint>(ResolveEndpoint, LazyThreadSafetyMode.ExecutionAndPublication);
         _forestEndpoints = new Lazy<IReadOnlyList<Endpoint>>(
@@ -91,14 +98,12 @@ public sealed class LdapDirectoryService : IDirectoryService
                 // 1. Explicit domain prefix (e.g. edu002\ST02438): route straight
                 //    to that DC so cross-domain lookups don't fall through the
                 //    home-domain search first.
-                if (domainHint is not null && FindEndpointForDomain(domainHint) is { } target)
+                if (domainHint is not null)
                 {
+                    var target = FindEndpointForDomain(domainHint);
+                    if (target is null) return GroupResolution.Unavailable;
                     var hit = ResolveGroupsOnEndpoint(sam, target);
-                    reachable |= hit.Reachable;
-                    if (hit.Sids.Count > 0)
-                    {
-                        return GroupResolution.Resolved(hit.Sids);
-                    }
+                    return hit.Reachable ? GroupResolution.Resolved(hit.Sids) : GroupResolution.Unavailable;
                 }
 
                 // 2. This server's own domain.
@@ -109,17 +114,8 @@ public sealed class LdapDirectoryService : IDirectoryService
                     return GroupResolution.Resolved(home.Sids);
                 }
 
-                // 3. Forest-wide — the user may live in another domain (edu002 vs
-                //    edu001). Each domain is best-effort.
-                foreach (var endpoint in _forestEndpoints.Value)
-                {
-                    var hit = ResolveGroupsOnEndpoint(sam, endpoint);
-                    reachable |= hit.Reachable;
-                    if (hit.Sids.Count > 0)
-                    {
-                        return GroupResolution.Resolved(hit.Sids);
-                    }
-                }
+                // An unqualified name belongs to the home domain only. Never
+                // borrow groups from a same-named account in another domain.
 
                 // Nothing found anywhere. If we reached at least one DC this is an
                 // authoritative "no groups"; if every DC was unreachable it's an
@@ -209,11 +205,8 @@ public sealed class LdapDirectoryService : IDirectoryService
         if (_ldap.UseSsl)
         {
             connection.SessionOptions.SecureSocketLayer = true;
-            if (_ldap.AllowInvalidCertificate)
-            {
-                connection.SessionOptions.VerifyServerCertificate = (_, _) => true;
-            }
         }
+        else { connection.SessionOptions.Signing = true; connection.SessionOptions.Sealing = true; }
 
         try
         {
@@ -570,9 +563,10 @@ public sealed class LdapDirectoryService : IDirectoryService
         return null;
     }
 
-    /// <summary>Searches every forest domain for a group by name, returning the first SID match.</summary>
+    /// <summary>Searches discovered forest domains; returns a SID only for a unique match.</summary>
     private string? ResolveGroupSidForestWide(string name)
     {
+        var matches = new HashSet<string>(StringComparer.Ordinal);
         foreach (var endpoint in _forestEndpoints.Value)
         {
             try
@@ -601,17 +595,18 @@ public sealed class LdapDirectoryService : IDirectoryService
                     if (GroupName(entry).Equals(name, StringComparison.OrdinalIgnoreCase)
                         && entry.Attributes["objectSid"]?.GetValues(typeof(byte[])).FirstOrDefault() is byte[] raw)
                     {
-                        return SidConverter.ToSidString(raw);
+                        matches.Add(SidConverter.ToSidString(raw));
                     }
                 }
             }
             catch (Exception ex)
             {
                 _logger.LogDebug(ex, "Forest group search failed in {Domain}.", endpoint.Server);
+                return null; // Cannot establish that the name is unambiguous.
             }
         }
 
-        return null;
+        return matches.Count == 1 ? matches.Single() : null;
     }
 
     /// <summary>
@@ -671,11 +666,8 @@ public sealed class LdapDirectoryService : IDirectoryService
         if (_ldap.UseSsl)
         {
             connection.SessionOptions.SecureSocketLayer = true;
-            if (_ldap.AllowInvalidCertificate)
-            {
-                connection.SessionOptions.VerifyServerCertificate = (_, _) => true;
-            }
         }
+        else { connection.SessionOptions.Signing = true; connection.SessionOptions.Sealing = true; }
 
         if (IsNegotiate(_ldap.AuthMode))
         {

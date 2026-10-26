@@ -1,0 +1,64 @@
+{
+  "version": 1,
+  "parameters": "--vulnerable --include-transitive",
+  "sources": [
+    "https://api.nuget.org/v3/index.json"
+  ],
+  "projects": [
+    {
+      "path": "src/OpenPrintDeploy.Shared/OpenPrintDeploy.Shared.csproj"
+    },
+    {
+      "path": "src/OpenPrintDeploy.Server/OpenPrintDeploy.Server.csproj",
+      "frameworks": [
+        {
+          "framework": "net8.0",
+          "transitivePackages": [
+            {
+              "id": "SQLitePCLRaw.lib.e_sqlite3",
+              "resolvedVersion": "2.1.6",
+              "vulnerabilities": [
+                {
+                  "severity": "High",
+                  "advisoryurl": "https://github.com/advisories/GHSA-2m69-gcr7-jv3q"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "path": "src/OpenPrintDeploy.Client.Tray/OpenPrintDeploy.Client.Tray.csproj"
+    },
+    {
+      "path": "tests/OpenPrintDeploy.Server.Tests/OpenPrintDeploy.Server.Tests.csproj",
+      "frameworks": [
+        {
+          "framework": "net8.0",
+          "transitivePackages": [
+            {
+              "id": "SQLitePCLRaw.lib.e_sqlite3",
+              "resolvedVersion": "2.1.6",
+              "vulnerabilities": [
+                {
+                  "severity": "High",
+                  "advisoryurl": "https://github.com/advisories/GHSA-2m69-gcr7-jv3q"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "path": "src/OpenPrintDeploy.Client.Core/OpenPrintDeploy.Client.Core.csproj"
+    },
+    {
+      "path": "installer/OpenPrintDeploy.Client.Cleanup/OpenPrintDeploy.Client.Cleanup.csproj"
+    },
+    {
+      "path": "src/OpenPrintDeploy.Client.Service/OpenPrintDeploy.Client.Service.csproj"
+    }
+  ]
+}

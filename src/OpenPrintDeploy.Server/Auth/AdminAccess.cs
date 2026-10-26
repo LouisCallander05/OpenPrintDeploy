@@ -24,7 +24,7 @@ public sealed record EffectiveAdminAccess(
     bool Sealed = false)
 {
     /// <summary>
-    /// Nothing configured anywhere → first-run "any authenticated user" mode. A
+    /// Nothing configured anywhere → first-run bootstrap for server administrators. A
     /// sealed store (present-but-unreadable admin file) is never open: it falls
     /// back to the appsettings break-glass grants only, fail-closed.
     /// </summary>

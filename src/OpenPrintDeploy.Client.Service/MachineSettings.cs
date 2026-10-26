@@ -38,7 +38,8 @@ internal sealed record MachineSettings(Uri Server, string? Pin, IReadOnlyList<st
         if (string.IsNullOrWhiteSpace(url) && !string.IsNullOrWhiteSpace(identity.Host)) url = $"https://{identity.Host}:5443";
         if (string.IsNullOrWhiteSpace(pin)) pin = identity.Thumbprint;
         if (!Uri.TryCreate(url, UriKind.Absolute, out var server) || server.Scheme != "https"
-            || !string.IsNullOrEmpty(server.UserInfo) || server.AbsolutePath != "/" || !string.IsNullOrEmpty(server.Query))
+            || !string.IsNullOrEmpty(server.UserInfo) || server.AbsolutePath != "/" || !string.IsNullOrEmpty(server.Query)
+            || !string.IsNullOrEmpty(server.Fragment))
             throw new InvalidOperationException("Driver service requires an administrator-configured HTTPS server origin.");
         IReadOnlyList<string> allowed = string.IsNullOrWhiteSpace(hosts) ? [server.Host]
             : hosts.Split([',', ';', ' '], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);

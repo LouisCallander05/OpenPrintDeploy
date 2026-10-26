@@ -9,7 +9,7 @@ namespace OpenPrintDeploy.Client.Cleanup;
 /// Runs <c>--remove-user</c> in the interactive user's session right now, so the
 /// person sitting at the machine when it's uninstalled doesn't have to sign out
 /// and back in for their printers to go. The logon task still covers everyone
-/// else (and this same user on later logons — the manifest prune makes that a
+/// else (and this same user on later logons — their completion marker makes that a
 /// no-op).
 ///
 /// <para>Identity, same branch as the installer's UserSessionLauncher:</para>

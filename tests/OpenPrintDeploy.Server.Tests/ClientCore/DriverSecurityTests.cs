@@ -35,6 +35,8 @@ public sealed class DriverSecurityTests
     [InlineData("good.inf:stream")]
     [InlineData("package./driver.inf")]
     [InlineData("CON.inf")]
+    [InlineData("CONIN$")]
+    [InlineData("CONOUT$")]
     [InlineData("CON .inf")]
     [InlineData("COM¹.inf")]
     [InlineData("/absolute.inf")]

@@ -20,10 +20,12 @@ internal sealed class DriverWorker(DriverInstaller installer, ILogger<DriverWork
         security.AddAccessRule(new PipeAccessRule(new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null), PipeAccessRights.FullControl, AccessControlType.Allow));
         security.AddAccessRule(new PipeAccessRule(new SecurityIdentifier(WellKnownSidType.AuthenticatedUserSid, null),
             PipeAccessRights.ReadWrite, AccessControlType.Allow));
+        // Keep the first instance reserved across requests; don't leave a gap
+        // where another local process can claim the service name.
+        using var pipe = NamedPipeServerStreamAcl.Create(DriverProtocol.PipeName, PipeDirection.InOut, 1,
+                PipeTransmissionMode.Byte, PipeOptions.Asynchronous | PipeOptions.FirstPipeInstance, 4096, 4096, security);
         while (!stoppingToken.IsCancellationRequested)
         {
-            using var pipe = NamedPipeServerStreamAcl.Create(DriverProtocol.PipeName, PipeDirection.InOut, 1,
-                PipeTransmissionMode.Byte, PipeOptions.Asynchronous | PipeOptions.FirstPipeInstance, 4096, 4096, security);
             await pipe.WaitForConnectionAsync(stoppingToken);
             try
             {
@@ -50,6 +52,7 @@ internal sealed class DriverWorker(DriverInstaller installer, ILogger<DriverWork
             {
                 logger.LogWarning(ex, "Driver client disconnected or sent an invalid request");
             }
+            finally { pipe.Disconnect(); }
         }
     }
 }

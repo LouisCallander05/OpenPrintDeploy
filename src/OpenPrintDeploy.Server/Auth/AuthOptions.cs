@@ -35,12 +35,12 @@ public sealed class AdminAuthOptions
     /// Break-glass admin grants from configuration, honoured IN ADDITION to the
     /// editable Settings-page list. Edit appsettings + restart to recover access
     /// if the Settings page ever locks you out. When Groups, Users, GroupSids AND
-    /// the stored list are all empty, any authenticated user is an admin
-    /// (first-run bootstrap).
+    /// the stored list are all empty, production bootstrap requires the server's
+    /// local Administrators SID in the authenticated token.
     /// </summary>
     public List<string> Groups { get; } = [];
 
-    /// <summary>Admin usernames (sAMAccountName, <c>DOMAIN\user</c>, or UPN).</summary>
+    /// <summary>Exact authenticated account names (normally DOMAIN\user), or user SIDs.</summary>
     public List<string> Users { get; } = [];
 
     /// <summary>Legacy: admin group SIDs. Still honoured for backward compatibility.</summary>

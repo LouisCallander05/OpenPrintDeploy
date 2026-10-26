@@ -1,0 +1,79 @@
+{
+  "auditDate": "2026-10-26",
+  "baselineCommit": "78adcc4eef246acab16a372a34072e6d1296ccf2",
+  "branch": "security/audit-0.10",
+  "localPackageVersion": "0.10.1-security.1",
+  "published": false,
+  "installedOrDeployed": false,
+  "tests": {
+    "passed": 247,
+    "failed": 0,
+    "nativeSqliteVersion": "3.54.0",
+    "command": "dotnet test OpenPrintDeploy.sln -c Release"
+  },
+  "solutionBuild": {
+    "warnings": 0,
+    "errors": 0
+  },
+  "dependencyScan": {
+    "projects": 7,
+    "vulnerablePackagesAfter": 0,
+    "includeTransitive": true
+  },
+  "runtimes": [
+    {
+      "component": "Server",
+      "includedFrameworks": [
+        {
+          "name": "Microsoft.NETCore.App",
+          "version": "8.0.33"
+        },
+        {
+          "name": "Microsoft.AspNetCore.App",
+          "version": "8.0.33"
+        }
+      ]
+    },
+    {
+      "component": "Client.Tray",
+      "includedFrameworks": [
+        {
+          "name": "Microsoft.NETCore.App",
+          "version": "8.0.33"
+        },
+        {
+          "name": "Microsoft.WindowsDesktop.App",
+          "version": "8.0.33"
+        }
+      ]
+    },
+    {
+      "component": "Client.Service",
+      "includedFrameworks": [
+        {
+          "name": "Microsoft.NETCore.App",
+          "version": "8.0.33"
+        }
+      ]
+    }
+  ],
+  "artifacts": [
+    {
+      "name": "OpenPrintDeploy.Client.msi",
+      "bytes": 115967354,
+      "sha256": "3f399f83957a7aefecc0ef20648b8e0888faf38f4716671389dfaabd4977da77",
+      "signature": "NotSigned"
+    },
+    {
+      "name": "OpenPrintDeploy.Server.msi",
+      "bytes": 158362404,
+      "sha256": "c689a7103161aeb5d531c537e0b380eba4e19f01e87bd48633000f50b89b2911",
+      "signature": "NotSigned"
+    }
+  ],
+  "limitations": [
+    "No live AD, SignalR browser or SYSTEM privilege-escalation tests",
+    "No MSI install, upgrade or uninstall test on a clean VM",
+    "MSIs are unsigned local pilot artifacts"
+  ]
+}

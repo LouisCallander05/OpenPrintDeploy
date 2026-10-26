@@ -8,8 +8,8 @@ public sealed class AdminRequirement : IAuthorizationRequirement;
 /// <summary>
 /// Grants admin-UI access by delegating to <see cref="AdminAccessEvaluator"/>,
 /// which combines the appsettings break-glass grants with the editable
-/// Settings-page list (and falls back to "any authenticated user" when nothing
-/// is configured anywhere). Runs on the cold admin-UI path only.
+/// Settings-page list (and requires server administrator membership during
+/// first-run bootstrap). Also used to revalidate live admin circuits.
 /// </summary>
 public sealed class AdminAuthorizationHandler : AuthorizationHandler<AdminRequirement>
 {

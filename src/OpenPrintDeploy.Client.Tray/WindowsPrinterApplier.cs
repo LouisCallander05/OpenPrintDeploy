@@ -19,8 +19,8 @@ public sealed class WindowsPrinterApplier : IPrinterApplier
     private readonly IReadOnlyCollection<string> _allowedPrintServers;
 
     /// <param name="allowedPrintServers">
-    /// Hosts whose printers may be installed. Empty enforces only UNC-format
-    /// validation (no host allow-listing). The tray defaults this to the
+    /// Exact hosts whose printers may be installed. Empty denies connections.
+    /// The tray defaults this to the
     /// configured server's host; an admin can widen it for split print servers.
     /// </param>
     public WindowsPrinterApplier(IReadOnlyCollection<string>? allowedPrintServers = null)

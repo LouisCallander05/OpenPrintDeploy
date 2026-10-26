@@ -5,19 +5,21 @@ namespace OpenPrintDeploy.Server.Auth;
 /// <summary>
 /// Persists the Settings-page admin grants to a small JSON file (alongside the
 /// app in dev, under ProgramData on a Windows server). A file — not the DB — so
-/// there's no migration, and an operator can read/fix it directly. All reads
-/// degrade to "empty" on error so a corrupt file can't take down authorization.
+/// there's no migration, and an operator can read/fix it directly. Unreadable
+/// or insecure storage seals authorization to configured break-glass grants.
 /// </summary>
 public sealed class AdminAccessStore
 {
     private readonly string _path;
     private readonly ILogger<AdminAccessStore> _logger;
     private readonly object _lock = new();
+    private readonly bool _protected;
 
     public AdminAccessStore(IHostEnvironment env, ILogger<AdminAccessStore> logger)
     {
         _logger = logger;
         _path = ResolvePath(env);
+        _protected = OperatingSystem.IsWindows() && !env.IsDevelopment();
     }
 
     public string FilePath => _path;
@@ -37,13 +39,10 @@ public sealed class AdminAccessStore
     {
         lock (_lock)
         {
-            if (!File.Exists(_path))
-            {
-                return new AdminAccessLoad(AdminAccess.Empty, Unreadable: false);
-            }
-
             try
             {
+                ValidateStorage();
+                if (!File.Exists(_path)) return new AdminAccessLoad(AdminAccess.Empty, Unreadable: false);
                 var dto = JsonSerializer.Deserialize<Dto>(File.ReadAllText(_path));
                 return dto is null
                     ? new AdminAccessLoad(AdminAccess.Empty, Unreadable: true)
@@ -64,6 +63,7 @@ public sealed class AdminAccessStore
     {
         lock (_lock)
         {
+            ValidateStorage();
             var dir = Path.GetDirectoryName(_path);
             if (!string.IsNullOrEmpty(dir))
             {
@@ -71,9 +71,25 @@ public sealed class AdminAccessStore
             }
 
             var dto = new Dto { Groups = Clean(access.Groups), Users = Clean(access.Users) };
-            File.WriteAllText(_path, JsonSerializer.Serialize(dto, new JsonSerializerOptions { WriteIndented = true }));
+            var temp = _path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            try
+            {
+                using (var writer = new StreamWriter(new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.None)))
+                    writer.Write(JsonSerializer.Serialize(dto, new JsonSerializerOptions { WriteIndented = true }));
+                File.Move(temp, _path, overwrite: true);
+            }
+            finally { if (File.Exists(temp)) File.Delete(temp); }
             _logger.LogInformation("Admin access updated: {Groups} group(s), {Users} user(s).",
                 dto.Groups.Count, dto.Users.Count);
+        }
+    }
+
+    private void ValidateStorage()
+    {
+        if (_protected && OperatingSystem.IsWindows())
+        {
+            OpenPrintDeploy.Shared.Drivers.PrivateDirectory.Create(Path.GetDirectoryName(_path)!);
+            OpenPrintDeploy.Shared.Drivers.PrivateDirectory.ValidateExistingFile(_path);
         }
     }
 

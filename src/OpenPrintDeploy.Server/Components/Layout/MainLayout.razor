@@ -43,8 +43,8 @@
 </div>
 
 @code {
-    // First-run gate: while no admin is configured (the system is open to any
-    // signed-in user), force every admin page to the /setup onboarding so the
+    // First-run gate: while no admin is configured, authorized server admins
+    // are directed from every admin page to the /setup onboarding so the
     // operator names an admin group before doing anything else. Once configured,
     // this never fires. /setup itself is exempt to avoid a redirect loop.
     protected override async Task OnInitializedAsync()

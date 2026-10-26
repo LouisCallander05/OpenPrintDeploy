@@ -51,7 +51,8 @@ public sealed class SyncApiClient
     /// </summary>
     public static HttpClient CreateDefaultCredentialsClient(Uri baseAddress, string? pinnedThumbprint = null)
     {
-        var handler = new HttpClientHandler { UseDefaultCredentials = true };
+        var cache = new CredentialCache { { baseAddress, "Negotiate", CredentialCache.DefaultNetworkCredentials } };
+        var handler = new HttpClientHandler { Credentials = cache, AllowAutoRedirect = false };
         ApplyCertificatePinning(handler, pinnedThumbprint);
         return new HttpClient(handler) { BaseAddress = baseAddress };
     }
@@ -70,7 +71,7 @@ public sealed class SyncApiClient
         // Scope the credential to this server + Negotiate so it's never offered
         // anywhere else, and so a default-credentials handler isn't used instead.
         var cache = new CredentialCache { { baseAddress, "Negotiate", credential } };
-        var handler = new HttpClientHandler { Credentials = cache };
+        var handler = new HttpClientHandler { Credentials = cache, AllowAutoRedirect = false };
         ApplyCertificatePinning(handler, pinnedThumbprint);
         return new HttpClient(handler) { BaseAddress = baseAddress };
     }

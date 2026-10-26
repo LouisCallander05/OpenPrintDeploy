@@ -19,7 +19,7 @@ public static class DriverPackageFiles
         return result;
     }
 
-    public static void Extract(string zipPath, string destination)
+    public static void Extract(string zipPath, string destination, CancellationToken ct = default)
     {
         using var zip = ZipFile.OpenRead(zipPath);
         if (zip.Entries.Count > 10000) throw new InvalidDataException("Too many package files.");
@@ -27,6 +27,7 @@ public static class DriverPackageFiles
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var entry in zip.Entries)
         {
+            ct.ThrowIfCancellationRequested();
             if (entry.FullName.EndsWith('/')) continue;
             var path = Resolve(destination, entry.FullName);
             if (!seen.Add(path)) throw new InvalidDataException("Duplicate package path.");
@@ -40,17 +41,19 @@ public static class DriverPackageFiles
             int read;
             while ((read = source.Read(buffer)) > 0)
             {
+                ct.ThrowIfCancellationRequested();
                 copied += read;
                 if (copied > entry.Length) throw new InvalidDataException("Incorrect package file length.");
                 target.Write(buffer, 0, read);
             }
+            if (copied != entry.Length) throw new InvalidDataException("Incomplete package file.");
         }
     }
 
     private static bool IsDeviceName(string name)
     {
         var stem = name.Split('.')[0].TrimEnd(' ').ToUpperInvariant();
-        return stem is "CON" or "PRN" or "AUX" or "NUL" ||
+        return stem is "CON" or "PRN" or "AUX" or "NUL" or "CONIN$" or "CONOUT$" ||
             (stem.Length == 4 && (stem.StartsWith("COM") || stem.StartsWith("LPT"))
                 && (char.IsDigit(stem[3]) || "¹²³".Contains(stem[3])));
     }

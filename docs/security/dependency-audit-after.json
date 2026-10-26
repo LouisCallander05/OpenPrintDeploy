@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "parameters": "--vulnerable --include-transitive",
+  "sources": [
+    "https://api.nuget.org/v3/index.json"
+  ],
+  "projects": [
+    {
+      "path": "src/OpenPrintDeploy.Shared/OpenPrintDeploy.Shared.csproj"
+    },
+    {
+      "path": "src/OpenPrintDeploy.Server/OpenPrintDeploy.Server.csproj"
+    },
+    {
+      "path": "src/OpenPrintDeploy.Client.Tray/OpenPrintDeploy.Client.Tray.csproj"
+    },
+    {
+      "path": "tests/OpenPrintDeploy.Server.Tests/OpenPrintDeploy.Server.Tests.csproj"
+    },
+    {
+      "path": "src/OpenPrintDeploy.Client.Core/OpenPrintDeploy.Client.Core.csproj"
+    },
+    {
+      "path": "installer/OpenPrintDeploy.Client.Cleanup/OpenPrintDeploy.Client.Cleanup.csproj"
+    },
+    {
+      "path": "src/OpenPrintDeploy.Client.Service/OpenPrintDeploy.Client.Service.csproj"
+    }
+  ]
+}

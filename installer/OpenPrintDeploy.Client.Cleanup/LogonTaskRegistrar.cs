@@ -29,13 +29,15 @@ internal static class LogonTaskRegistrar
     public static bool Register(string exePath)
     {
         var xml = BuildTaskXml(exePath, DateTime.Now);
-        var xmlPath = Path.Combine(Path.GetTempPath(), "opd-remove-managed-printers.xml");
+        var xmlPath = Path.Combine(CleanupPaths.PersistentDir, Guid.NewGuid().ToString("N") + ".xml");
 
         try
         {
             // schtasks /XML wants UTF-16; write it that way to be safe with any
             // unusual characters in the exe path.
-            File.WriteAllText(xmlPath, xml, new UnicodeEncoding(bigEndian: false, byteOrderMark: true));
+            using (var writer = new StreamWriter(new FileStream(xmlPath, FileMode.CreateNew, FileAccess.Write, FileShare.None),
+                new UnicodeEncoding(bigEndian: false, byteOrderMark: true)))
+                writer.Write(xml);
 
             var ok = RunSchtasks($"/Create /TN \"{TaskName}\" /XML \"{xmlPath}\" /F");
             if (ok)

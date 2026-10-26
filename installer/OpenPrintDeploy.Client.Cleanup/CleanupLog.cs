@@ -5,11 +5,9 @@ using System.Security.Principal;
 namespace OpenPrintDeploy.Client.Cleanup;
 
 /// <summary>
-/// Append-only log shared by the SYSTEM gather pass and every per-user removal
-/// pass, so the whole uninstall story is in one file for field diagnosis. Each
-/// line is stamped with the running identity (SYSTEM vs the user) because the
-/// passes interleave across logons. Best-effort: a logging failure never aborts
-/// the uninstall. Also echoes to stdout so MSI/installer logs capture it too.
+/// Privileged work logs to stdout for MSI capture. Standard-user removal also
+/// appends to that user's own log. Never opens a shared writable log as SYSTEM.
+/// Best-effort: a logging failure never aborts the uninstall.
 /// </summary>
 internal static class CleanupLog
 {
@@ -29,14 +27,18 @@ internal static class CleanupLog
         {
             lock (Lock)
             {
-                Directory.CreateDirectory(CleanupPaths.RootDir);
-                File.AppendAllText(CleanupPaths.LogPath, line + Environment.NewLine);
+                using var identity = WindowsIdentity.GetCurrent();
+                // Privileged logs go to MSI stdout only. Never append as SYSTEM
+                // to a path a user could have pre-created or redirected.
+                if (identity.IsSystem || new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator)) return;
+                var directory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "OpenPrintDeploy");
+                Directory.CreateDirectory(directory);
+                File.AppendAllText(Path.Combine(directory, "opd-uninstall.log"), line + Environment.NewLine);
             }
         }
         catch
         {
-            // Never crash the uninstall over a logging failure (e.g. a limited
-            // user without write access if the ACL grant didn't take).
+            // Never crash the uninstall over a logging failure.
         }
     }
 

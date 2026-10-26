@@ -56,7 +56,7 @@ internal sealed class DriverInstaller(ILogger<DriverInstaller> logger)
             }
             var extracted = Path.Combine(work, "files");
             Directory.CreateDirectory(extracted);
-            DriverPackageFiles.Extract(zipPath, extracted);
+            DriverPackageFiles.Extract(zipPath, extracted, ct);
             var inf = DriverPackageFiles.Resolve(extracted, manifest.InfPath);
             if (!inf.EndsWith(".inf", StringComparison.OrdinalIgnoreCase) || !File.Exists(inf))
                 throw new InvalidDataException("Driver INF is missing.");

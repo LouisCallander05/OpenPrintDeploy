@@ -56,8 +56,8 @@ public sealed class LdapOptions
     public int TimeoutSeconds { get; set; } = 10;
 
     /// <summary>
-    /// Dev-only escape hatch to skip server certificate validation on LDAPS.
-    /// Never enable in production.
+    /// Legacy option retained for configuration diagnostics. Setting it to true
+    /// is rejected; directory certificates must pass normal validation.
     /// </summary>
     public bool AllowInvalidCertificate { get; set; }
 }

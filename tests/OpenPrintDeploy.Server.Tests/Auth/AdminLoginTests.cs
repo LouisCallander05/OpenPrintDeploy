@@ -30,6 +30,7 @@ public sealed class AdminLoginTests
         Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
         Assert.Contains("/login?ReturnUrl=", response.Headers.Location!.ToString());
         Assert.Empty(response.Headers.WwwAuthenticate);
+        Assert.Equal("DENY", Assert.Single(response.Headers.GetValues("X-Frame-Options")));
         var html = await client.GetStringAsync("/login");
         Assert.Contains("name=\"username\"", html);
         Assert.Contains("type=\"password\"", html);
@@ -241,7 +242,7 @@ public sealed class AdminLoginTests
             {
                 ["ConnectionStrings:AppDb"] = $"Data Source={Path.Combine(_directory, "test.db")};Pooling=False",
                 ["Https:Enabled"] = "false", ["Auth:Dev:DefaultUser"] = "",
-                ["Auth:Admin:Users:0"] = "admin",
+                ["Auth:Admin:Users:0"] = "DOMAIN\\admin",
             }));
             builder.ConfigureTestServices(services =>
             {

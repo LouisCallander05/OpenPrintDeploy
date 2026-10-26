@@ -9,7 +9,6 @@ public sealed class PrinterUncPolicyTests
 
     [Theory]
     [InlineData(@"\\printsrv01.corp.local\HR Printer")]
-    [InlineData(@"\\printsrv01\HR Printer")] // short name matches the allowed FQDN
     public void AllowsWellFormedUncFromAllowedHost(string unc)
     {
         Assert.True(PrinterUncPolicy.IsAllowed(unc, Allowed, out _));
@@ -36,11 +35,23 @@ public sealed class PrinterUncPolicyTests
     }
 
     [Fact]
-    public void EmptyAllowList_EnforcesFormatOnly()
+    public void EmptyAllowList_DeniesConnections()
     {
-        Assert.True(PrinterUncPolicy.IsAllowed(@"\\anyhost\share", [], out _));
+        Assert.False(PrinterUncPolicy.IsAllowed(@"\\anyhost\share", [], out _));
         Assert.False(PrinterUncPolicy.IsAllowed("garbage", [], out _));
     }
+
+    [Theory]
+    [InlineData(@"\\printsrv01.attacker.example\share")]
+    [InlineData(@"\\printsrv01\share")]
+    [InlineData("\\\\printsrv01.corp.local\\share\0extra")]
+    [InlineData(@"\\printsrv01.corp.local\share:stream")]
+    public void SameShortLabelOrWindowsAliasDoesNotBypassPolicy(string unc)
+        => Assert.False(PrinterUncPolicy.IsAllowed(unc, Allowed, out _));
+
+    [Fact]
+    public void ShortNameRequiresExplicitGrant()
+        => Assert.True(PrinterUncPolicy.IsAllowed(@"\\printsrv01\share", ["printsrv01", "printsrv01.corp.local"], out _));
 
     [Fact]
     public void DoesNotShortMatchDifferentIps()

@@ -11,7 +11,7 @@ This file is a public-facing summary mirrored for repo readers.
   Blazor Server admin UI. SQLite via EF Core.
 - **OpenPrintDeploy.Client.Tray** — WPF tray app running in each user's
   session. Authenticates to the server as the signed-in user (Kerberos via
-  `UseDefaultCredentials`), fetches the resolved printer set from `/sync`,
+  credentials scoped to the configured origin), fetches the resolved printer set from `/sync`,
   installs/removes per-user printer connections (`AddPrinterConnection2W` /
   `DeletePrinterConnection`), and raises balloon toasts.
 - **OpenPrintDeploy.Shared** — DTOs and contracts shared by both sides.
@@ -79,10 +79,13 @@ See [driver delivery and pilot procedure](driver-delivery.md) for scope and limi
 
 Admin grants are an editable group/user list (`admin-access.json`, under
 ProgramData) unioned with break-glass grants in `appsettings.json`
-(`Auth:Admin`). When *nothing* is configured anywhere the system is "open" —
-any authenticated user is an admin — so the first person can bootstrap.
+(`Auth:Admin`). When nothing is configured, production setup requires the
+server's local Administrators group SID in the authenticated token. Ordinary
+domain users cannot claim the first administrator account. Explicit user grants
+match the full authenticated account name (normally `DOMAIN\user`) or its user
+SID; bare names are not aliases for accounts in other domains.
 
-To keep that open window tiny, the server MSI opens the admin UI on install and
+The server MSI opens the admin UI on install and
 the app **forces first-run setup**: while no admin is configured, every admin
 page redirects to `/setup`, which makes the operator name an admin AD group
 (validated against the directory) before anything else. Saving a group closes
@@ -93,7 +96,7 @@ onboarding entirely (the system is never open).
 
 A **corrupt/unreadable** `admin-access.json` fails **closed**, not open: it's
 treated as "sealed" (appsettings break-glass grants only), never collapsing back
-to the open "any authenticated user" state. A damaged file can lock admins out
+to unrestricted access. A damaged file can lock admins out
 (recover via appsettings) but can never silently re-grant the whole domain.
 
 ### Client print-server allow-list
@@ -101,8 +104,11 @@ to the open "any authenticated user" state. A damaged file can lock admins out
 The tray validates every server-supplied UNC before handing it to the spooler:
 it must be a well-formed `\\host\share`, and its host must be on the allow-list
 (`PrinterUncPolicy`). The list defaults to the configured server's host, widened
-via `ALLOWEDSERVERS=` / registry / appsettings for split print servers. Defence
-in depth on top of TLS pinning — a compromised server still can't point the
+via `ALLOWEDSERVERS=` / registry / appsettings for split print servers. Validation
+requires exact host matches: short names and FQDNs must be listed separately.
+An empty list denies connections. HTTP clients refuse redirects and scope
+Windows credentials to the configured server's Negotiate authentication.
+This adds defence in depth on top of TLS pinning — a compromised server can't point the
 spooler at an arbitrary host (NTLM-relay / malicious point-and-print).
 
 ## Transport security (TLS)
@@ -117,9 +123,9 @@ only and points the admin shortcut at `https://localhost:5443/`. (Development �
 On first boot the server provisions a certificate: an operator-supplied
 `Https:PfxPath`, else a self-signed cert persisted to the machine store (its
 thumbprint shows on the admin **Settings → Connection security** card). A cert
-that fails to provision degrades to an emergency HTTP listener on 5080
-(reachable on loopback only, since the firewall opens 5443) rather than failing
-startup.
+that fails to provision prevents production startup. Disabling HTTPS or its
+enforcement also prevents production startup; repair certificate/configuration
+problems without exposing authentication on a fallback HTTP listener.
 
 Clients must trust the server cert. Three options:
 
@@ -163,11 +169,10 @@ issuer, so renewals don't change what clients trust — no pinning, no re-pin.
 
 ### Migrating an existing HTTP fleet
 
-HTTPS-only means a client still pointed at `http://host:5080` breaks. To move a
-live fleet gradually instead, set `Https:HttpPort=5080` and
-`Https:RequireHttps=false` so HTTP and HTTPS coexist, reissue clients onto HTTPS
-(with trust distributed), then return to the HTTPS-only defaults and re-open the
-firewall on 5443 / close 5080.
+HTTPS-only means a client still pointed at `http://host:5080` cannot connect.
+Distribute HTTPS trust and the updated client URL before upgrading the server.
+Production no longer permits disabling HTTPS enforcement to keep a plaintext
+listener available. Use a pilot deployment to validate the transition.
 
 ## Data model
 

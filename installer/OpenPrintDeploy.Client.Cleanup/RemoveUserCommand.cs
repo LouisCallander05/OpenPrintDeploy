@@ -7,9 +7,8 @@ namespace OpenPrintDeploy.Client.Cleanup;
 /// <summary>
 /// The per-user removal step, run in a user's own context (the logon task, or the
 /// immediate active-session launch). It removes exactly this user's eligible
-/// printer connections from the manifest, prunes its own managed-state record,
-/// then drops its SID from the manifest so re-runs are no-ops and the manifest
-/// empties as users sign in.
+/// printer connections from its own managed-state record and prunes that record.
+/// Completion is recorded in the user's profile; the shared request stays immutable.
 /// </summary>
 internal static class RemoveUserCommand
 {
@@ -34,27 +33,38 @@ internal static class RemoveUserCommand
         }
 
         var manifest = ReadManifest();
-        if (manifest is null)
+        if (manifest is null || manifest.Version != PendingRemoval.CurrentVersion)
         {
             // No manifest (already cleaned, or this user logged on after expiry).
             return 0;
         }
+        var completionPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "OpenPrintDeploy", "uninstall-completed.txt");
+        var manifestId = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes(manifest.Serialize())));
+        if (File.Exists(completionPath) && File.ReadAllText(completionPath) == manifestId) return 0;
 
         var entry = manifest.ForSid(sid);
-        if (entry is null || entry.Uncs.Count == 0)
+        if (entry is null)
         {
             CleanupLog.Info($"No pending printer removals for the current user [{sid}].");
             return 0;
         }
 
-        CleanupLog.Info($"Removing {entry.Uncs.Count} managed printer(s) for the current user [{sid}].");
-        foreach (var unc in entry.Uncs)
+        var statePath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "OpenPrintDeploy", "managed-printers.json");
+        var uncs = File.Exists(statePath)
+            ? PendingRemovalPlanner.EligibleForRemoval(ManagedPrinterSerializer.Parse(File.ReadAllText(statePath)))
+            : [];
+        CleanupLog.Info($"Removing {uncs.Count} managed printer(s) for the current user [{sid}].");
+        foreach (var unc in uncs)
         {
             PrinterConnections.TryRemove(unc);
         }
 
-        PruneOwnManagedState(entry.Uncs);
-        WriteBackWithoutSid(manifest, sid);
+        PruneOwnManagedState(uncs);
+        Directory.CreateDirectory(Path.GetDirectoryName(completionPath)!);
+        File.WriteAllText(completionPath, manifestId);
 
         CleanupLog.Info("Per-user printer removal complete.");
         return 0;
@@ -106,32 +116,4 @@ internal static class RemoveUserCommand
         }
     }
 
-    /// <summary>
-    /// Removes this SID from the manifest. Deletes the manifest entirely once the
-    /// last user is done (granted Modify on the file, a limited user can delete
-    /// it). Last-writer-wins on a concurrent logon is acceptable: the worst case
-    /// is a leftover SID whose next pass re-runs an idempotent removal.
-    /// </summary>
-    private static void WriteBackWithoutSid(PendingRemoval manifest, string sid)
-    {
-        try
-        {
-            var remaining = manifest.WithoutSid(sid);
-            if (remaining.Users.Count == 0)
-            {
-                File.Delete(CleanupPaths.ManifestPath);
-                CleanupLog.Info("Last user processed — removed the manifest.");
-            }
-            else
-            {
-                File.WriteAllText(CleanupPaths.ManifestPath, remaining.Serialize());
-                CleanupLog.Info($"Dropped this user from the manifest; {remaining.Users.Count} user(s) remain.");
-            }
-        }
-        catch (Exception ex)
-        {
-            // A failure here only means a redundant (idempotent) re-run later.
-            CleanupLog.Warn($"Could not update the manifest after removal ({ex.Message}).");
-        }
-    }
 }

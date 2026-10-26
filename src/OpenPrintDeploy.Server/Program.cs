@@ -120,6 +120,8 @@ if (httpsOptions.Enabled)
     });
 }
 
+if (!builder.Environment.IsDevelopment() && !httpsStatus.Enforced)
+    throw new InvalidOperationException("Production requires enforced HTTPS with a usable certificate. Refusing HTTP fallback.");
 builder.Services.AddSingleton(httpsStatus);
 
 // A context factory backs both the long-lived Blazor admin circuits
@@ -213,6 +215,8 @@ builder.Services.AddAppAuthentication(builder.Configuration, builder.Environment
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
 builder.Services.AddCascadingAuthenticationState();
+builder.Services.AddScoped<Microsoft.AspNetCore.Components.Authorization.AuthenticationStateProvider, AdminAuthenticationStateProvider>();
+builder.Services.AddScoped<Microsoft.AspNetCore.Components.Server.Circuits.CircuitHandler, AdminCircuitGuard>();
 
 // Rate-limit /sync: 12 requests per minute per authenticated user. Generous
 // enough for the default 5-minute interval plus manual "Sync now" clicks, but
@@ -281,6 +285,14 @@ if (httpsStatus.Enforced)
     app.UseHttpsRedirection();
 }
 
+app.Use(async (context, next) =>
+{
+    context.Response.Headers["X-Content-Type-Options"] = "nosniff";
+    context.Response.Headers["X-Frame-Options"] = "DENY";
+    context.Response.Headers["Content-Security-Policy"] = "frame-ancestors 'none'; base-uri 'self'; object-src 'none'";
+    context.Response.Headers["Referrer-Policy"] = "same-origin";
+    await next(context);
+});
 app.UseStaticFiles();
 app.UseAuthentication();
 app.UseAuthorization();
@@ -460,7 +472,9 @@ static string DefaultConnectionString(IHostEnvironment env)
     var dataDir = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
         "OpenPrintDeploy");
-    Directory.CreateDirectory(dataDir);
+    OpenPrintDeploy.Shared.Drivers.PrivateDirectory.Create(dataDir);
+    foreach (var name in new[] { "app.db", "app.db-wal", "app.db-shm" })
+        OpenPrintDeploy.Shared.Drivers.PrivateDirectory.ValidateExistingFile(Path.Combine(dataDir, name));
     return $"Data Source={Path.Combine(dataDir, "app.db")}";
 }
 

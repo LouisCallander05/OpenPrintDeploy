@@ -5,7 +5,7 @@ namespace OpenPrintDeploy.Client.Cleanup;
 
 /// <summary>
 /// The SYSTEM-context uninstall step. It does NOT remove printers itself (it
-/// can't reach other users' connections); it gathers what to remove, per SID,
+/// can't reach other users' connections); it gathers profile SIDs from HKLM,
 /// into the machine-wide manifest, arms a per-user logon task to do the actual
 /// removal, and kicks off an immediate removal for whoever is signed in now.
 /// </summary>
@@ -13,6 +13,10 @@ internal static class GatherCommand
 {
     public static int Run(string? policyOverride)
     {
+        using var identity = System.Security.Principal.WindowsIdentity.GetCurrent();
+        if (!identity.IsSystem && !new System.Security.Principal.WindowsPrincipal(identity)
+                .IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator)) return 0;
+        CleanupPaths.PrepareProtectedStorage();
         CleanupLog.Info("=== OPD uninstall: gather managed printers for removal ===");
 
         if (!PolicyReader.ShouldRemove(policyOverride))
@@ -24,24 +28,21 @@ internal static class GatherCommand
         var profiles = ProfileEnumerator.EnumerateManagedProfiles();
         if (profiles.Count == 0)
         {
-            CleanupLog.Info("No profiles have OPD-created printers to remove. Nothing to do.");
+            CleanupLog.Info("No eligible user profiles found. Nothing to do.");
             return 0;
         }
 
         var manifest = new PendingRemoval(
             PendingRemoval.CurrentVersion,
             DateTime.UtcNow.ToString("o"),
-            profiles
-                .Select(p => new PendingRemovalUser(p.Sid, p.UserName, p.EligibleUncs))
-                .ToList());
+            profiles);
 
         try
         {
             Directory.CreateDirectory(CleanupPaths.RootDir);
             File.WriteAllText(CleanupPaths.ManifestPath, manifest.Serialize());
             CleanupLog.Info(
-                $"Wrote removal manifest for {manifest.Users.Count} user(s), " +
-                $"{manifest.Users.Sum(u => u.Uncs.Count)} printer(s) total → {CleanupPaths.ManifestPath}");
+                $"Wrote cleanup request for {manifest.Users.Count} profile(s) → {CleanupPaths.ManifestPath}");
         }
         catch (Exception ex)
         {
@@ -49,8 +50,8 @@ internal static class GatherCommand
             return 0; // Never fail the uninstall.
         }
 
-        // Let limited per-user passes prune/delete the manifest.
-        AclGrant.GrantUsersModify(CleanupPaths.ManifestPath);
+        // The manifest remains SYSTEM/Administrators writable. Users record
+        // completion in their own profile instead of modifying other users' entries.
 
         // Stage a persistent copy of this exe so the logon task and the immediate
         // pass have a target after the install directory is deleted.
@@ -71,9 +72,8 @@ internal static class GatherCommand
     /// <summary>
     /// Copies the running exe into <see cref="CleanupPaths.PersistentDir"/>. With a
     /// self-contained single-file build, <see cref="Environment.ProcessPath"/> is
-    /// the bundle exe — a single file to copy. The destination folder inherits
-    /// ProgramData's Users = Read &amp; Execute, so users can run it but not
-    /// tamper with it.
+    /// the bundle exe — a single file to copy. The destination has an explicitly
+    /// protected ACL granting users read/execute and administrators/SYSTEM write.
     /// </summary>
     private static string? StagePersistentExe()
     {

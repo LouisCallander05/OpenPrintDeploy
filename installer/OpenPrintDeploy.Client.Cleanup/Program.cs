@@ -4,19 +4,18 @@ namespace OpenPrintDeploy.Client.Cleanup;
 /// Uninstall printer-cleanup tool for the Open Print Deploy client. Two modes:
 ///
 ///   OpenPrintDeploy.Client.Cleanup.exe --gather [--policy on|off]
-///       Run as SYSTEM/elevated by the uninstaller. Enumerates every user
-///       profile's managed state, writes a per-SID removal manifest, arms a
+///       Run as SYSTEM/elevated by the uninstaller. Enumerates profile SIDs
+///       from HKLM, writes a protected removal request, arms a
 ///       per-user logon task, and triggers an immediate removal for the active
 ///       session. --policy overrides the registry flag (the EXE installer passes
 ///       it for `uninstall --keep-printers`).
 ///
 ///   OpenPrintDeploy.Client.Cleanup.exe --remove-user
 ///       Run as a limited user (the logon task / active-session launch). Removes
-///       this user's manifest-listed printers, then drops the user from the
-///       manifest.
+///       this user's OPD-created printers, then records completion in their profile.
 ///
 /// Always returns 0: a cleanup failure must never fail the uninstall itself.
-/// Everything is logged to C:\ProgramData\OpenPrintDeploy\opd-uninstall.log.
+/// Privileged logs go to stdout; user removal also logs under LocalAppData.
 /// </summary>
 internal static class Program
 {
