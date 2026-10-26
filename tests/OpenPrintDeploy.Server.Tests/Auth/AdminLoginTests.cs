@@ -226,6 +226,13 @@ public sealed class AdminLoginTests
         public TestClock Clock { get; } = new();
         public HttpClient Client(string origin = "https://localhost") => CreateClient(new WebApplicationFactoryClientOptions
         { AllowAutoRedirect = false, BaseAddress = new Uri(origin) });
+        protected override IHost CreateHost(IHostBuilder builder)
+        {
+            // Set this before minimal-host startup can access the machine certificate store.
+            builder.ConfigureHostConfiguration(config => config.AddInMemoryCollection(
+                new Dictionary<string, string?> { ["Https:Enabled"] = "false" }));
+            return base.CreateHost(builder);
+        }
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
             System.IO.Directory.CreateDirectory(_directory);

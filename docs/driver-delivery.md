@@ -13,9 +13,8 @@ drivers or department policy.
 
 ## Requirements and supported scope
 
-- Driver delivery requires a 0.10 server and client. The beta.4 client works
-  with beta.2/beta.3 servers; this fix requires only a client upgrade. Older
-  clients ignore download tickets. With an older server, new clients attempt
+- Driver delivery requires a 0.10 server and client. Older clients continue to
+  sync and ignore download tickets. With an older server, new clients attempt
   normal Point and Print silently and report failure if elevation is needed.
 - OPD must run on the Windows print server hosting the queue. Its discovered
   UNC must match the registered printer UNC. Split-server queues are rejected
