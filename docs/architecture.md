@@ -1,203 +1,188 @@
-# Architecture
+# Architecture and security
 
-See the planning vault for the canonical, live version:
-`Obsidian/Alfred/projects/OpenPrintDeploy/`
+This document describes **release 0.10.3**. Use the
+[release tag](https://github.com/LouisCallander05/OpenPrintDeploy/tree/v0.10.3)
+when comparing implementation; the default branch may differ. The
+[README](../README.md) and [operations runbook](operations.md) are the technician
+entry points. No private planning vault is required to operate the release.
 
-This file is a public-facing summary mirrored for repo readers.
+## Components and identities
 
-## Components
+| Component | Identity and responsibility |
+| --- | --- |
+| Server | ASP.NET Core 8 Windows service, normally Local SYSTEM; web admin, sync API, SQLite, directory queries and local driver export |
+| Tray | Ordinary signed-in user; authentication, assignment sync and per-user printer connections |
+| Driver service | Local SYSTEM; restricted machine-configured driver preparation over a local named pipe |
+| Cleanup helper | Privileged setup of protected cleanup requests, then printer removal in each user's context |
 
-- **OpenPrintDeploy.Server** — ASP.NET Core 8 Windows Service. REST API +
-  Blazor Server admin UI. SQLite via EF Core.
-- **OpenPrintDeploy.Client.Tray** — WPF tray app running in each user's
-  session. Authenticates to the server as the signed-in user (Kerberos via
-  `UseDefaultCredentials`), fetches the resolved printer set from `/sync`,
-  installs/removes per-user printer connections (`AddPrinterConnection` /
-  `DeletePrinterConnection`), and raises balloon toasts.
-- **OpenPrintDeploy.Shared** — DTOs and contracts shared by both sides.
+The tray resolves assignments as the user. The driver service does not resolve
+groups or accept the user's password. Print jobs still use Windows printing;
+they are not sent through the OPD HTTPS API.
 
-## Why the tray app is sufficient
+## Assignment flow
 
-The earlier design also called for a SYSTEM-context Worker service driving
-syncs via named-pipe IPC. We dropped it: `/sync` needs the *user's* group
-memberships to evaluate zones, and the user-session tray already
-authenticates as the user via Kerberos. A SYSTEM service would authenticate
-as the computer account — wrong identity for zone resolution. The tray runs
-per-user, owns the HTTP client, and does its own `Add-Printer` /
-`Remove-Printer` — no IPC needed.
+1. The tray authenticates `POST /sync` using Windows Negotiate.
+2. The server prefers group SIDs from the authenticated token. If there are none,
+   it falls back to directory resolution.
+3. Zones match stored group SIDs using OR semantics; matching zone printer sets
+   are combined. Priority is a display order only.
+4. The response includes desired printers, whether resolution is authoritative,
+   explicit global removals and a sync correlation ID. On HTTPS, authoritative
+   assignments include protected driver tickets for new clients.
+5. The client compares assignments with installed connections and its persisted
+   managed state. A failed HTTP request does not produce a removal plan. A
+   non-authoritative response preserves zone assignments, but still carries
+   explicit global removals.
+6. New clients prepare drivers for assigned queues, including existing
+   connections so updates can be detected, before applying connection changes.
+7. Best-effort `POST /sync/report` records outcomes. Report failure does not undo
+   completed printer operations or turn them into a new reconciliation pass.
 
-## Auth
+The client can adopt an already-present assigned connection. Adoption avoids
+re-adding it, but puts it under future zone-removal management. Uninstall retains
+adopted connections by default while cleaning up OPD-created ones. Explicit global
+removal is independent of this ownership distinction.
 
-- Admin browser → server: Negotiate (Windows Integrated Auth)
-- Client → server: Negotiate / Kerberos
-- Server → LDAP: Negotiate (Kerberos) using the server process identity. On a
-  domain-joined print server running as Local SYSTEM that's the computer
-  account; nothing about the bind lives in config. A `Basic` bind with a
-  configured `BindDn`/`BindPassword` is supported for non-joined hosts.
-  **LDAPS by default** (`Directory:Ldap:UseSsl=true`, port 636) so credential
-  binds and lookups aren't cleartext — requires a DC LDAPS cert the server
-  trusts (standard with AD CS).
-- **Dev header auth** (`X-Dev-User`) is registered *only* in the Development
-  environment (`AuthExtensions`); production uses Basic/Negotiate. As a backstop
-  the server refuses to start if it's running as a Windows service while
-  `ASPNETCORE_ENVIRONMENT=Development` — the one way the header-spoof scheme
-  could otherwise reach a production host.
+An authoritative empty result means no assignments, not an outage. Wrong zone
+configuration or a successful lookup of the wrong account can therefore have
+real removal effects. No protocol can infer the operator's intended membership
+from an otherwise valid empty result.
 
-### Admin access & first-run
+0.9.17 and 0.10.3 sync contracts are compatible; 0.9.17 ignores the added driver
+ticket field. This does not install the privileged service on old clients or
+validate every Windows policy/driver combination.
 
-Admin grants are an editable group/user list (`admin-access.json`, under
-ProgramData) unioned with break-glass grants in `appsettings.json`
-(`Auth:Admin`). When *nothing* is configured anywhere the system is "open" —
-any authenticated user is an admin — so the first person can bootstrap.
+## Authentication and administration
 
-To keep that open window tiny, the server MSI opens the admin UI on install and
-the app **forces first-run setup**: while no admin is configured, every admin
-page redirects to `/setup`, which makes the operator name an admin AD group
-(validated against the directory) before anything else. Saving a group closes
-the open state; `/setup` then redirects away and can't re-open it. A "make my
-account an admin too" failsafe and the appsettings break-glass guard against
-lock-out. Pre-seeding `Auth:Admin:Groups`/`GroupSids` in appsettings skips
-onboarding entirely (the system is never open).
+Production admin login defaults to an HTTPS form. Windows `LogonUser` validates
+credentials; an encrypted HttpOnly/Secure cookie references a server-side,
+expiring ticket store. Passwords are not stored in admin sessions or logs.
+Sessions last at most eight hours and are lost on service restart or sign-out.
+Group claims are a sign-in-time snapshot. Permission checks and circuit
+revalidation limit continued access after admin grant changes.
 
-A **corrupt/unreadable** `admin-access.json` fails **closed**, not open: it's
-treated as "sealed" (appsettings break-glass grants only), never collapsing back
-to the open "any authenticated user" state. A damaged file can lock admins out
-(recover via appsettings) but can never silently re-grant the whole domain.
+Login/logout POSTs use antiforgery protection. Login attempts have per-account
+throttling and an IP rate limit. Native Windows logon is bounded to four concurrent
+workers and a 20-second response wait; timed-out native calls hold their worker
+until Windows returns.
 
-### Client print-server allow-list
+`Auth:AdminScheme=Negotiate` retains browser Windows SSO. Legacy `Basic` admin
+configuration selects forms. **Client sync always uses its own Windows
+authentication scheme**, not the browser's cookie or login form.
 
-The tray validates every server-supplied UNC before handing it to the spooler:
-it must be a well-formed `\\host\share`, and its host must be on the allow-list
-(`PrinterUncPolicy`). The list defaults to the configured server's host, widened
-via `ALLOWEDSERVERS=` / registry / appsettings for split print servers. Defence
-in depth on top of TLS pinning — a compromised server still can't point the
-spooler at an arbitrary host (NTLM-relay / malicious point-and-print).
+Admin grants in protected `admin-access.json` are combined with `Auth:Admin`
+configuration grants. Explicit users match full `DOMAIN\user` names or primary
+user SIDs; a bare username is not a cross-domain alias. Prefer group SIDs where
+group names may be ambiguous. With no grants, production bootstrap requires the
+local Administrators SID. An unreadable grant store fails closed; configured
+emergency grants are the recovery route.
 
-## Transport security (TLS)
+Standalone clients can store explicit domain credentials in the current user's
+Windows Credential Manager, keyed by the OPD host. Domain/Entra-joined clients
+attempt integrated authentication; their ability to authenticate to on-premises
+services depends on the Windows/domain deployment. OPD credentials do not create
+permissions to Windows print shares.
 
-Windows Integrated Auth (Negotiate/NTLM) over plain HTTP is sniffable and
-relay-able on a shared LAN, so the server is **HTTPS-only by default**. Out of
-the box (`appsettings.json` → `Https`): `Enabled=true`, `RequireHttps=true`,
-`HttpPort=0`, `HttpsPort=5443`. The server MSI opens the firewall on **5443**
-only and points the admin shortcut at `https://localhost:5443/`. (Development —
-`appsettings.Development.json` and the in-process tests — stays HTTP-only.)
+Development header authentication is registered only in Development. The server
+refuses to run as a Windows service in that environment.
 
-On first boot the server provisions a certificate: an operator-supplied
-`Https:PfxPath`, else a self-signed cert persisted to the machine store (its
-thumbprint shows on the admin **Settings → Connection security** card). A cert
-that fails to provision degrades to an emergency HTTP listener on 5080
-(reachable on loopback only, since the firewall opens 5443) rather than failing
-startup.
+## Directory transport and caching
 
-Clients must trust the server cert. Three options:
+Default LDAP configuration is Negotiate over LDAPS/636. With Local SYSTEM on a
+domain-joined server, the process uses the computer account. Blank server and
+search-base values trigger domain discovery. Explicit domain-qualified lookups
+are routed to that domain and fail closed if it cannot be resolved; unqualified
+names belong to the home domain. Group-name lookup requires a unique result.
 
-- **Operator/CA cert** (`Https:PfxPath`) — clients already trust the issuer;
-  nothing to distribute.
-- **Push the self-signed public cert** to clients' Trusted Root (GPO/Intune).
-- **Pin the thumbprint** on the client — `CERTTHUMBPRINT=` on the client MSI
-  (`msiexec /i "OpenPrintDeploy.Client.msi" SERVER="https://host:5443"
-  CERTTHUMBPRINT="AB12…"`), or `Server:CertificateThumbprint` /
-  `OPD_SERVER_CERT_THUMBPRINT` / registry `ServerCertificateThumbprint`. The tray
-  then trusts exactly that one cert without a trust-store push. The self-signed
-  cert is long-lived (`Https:SelfSignedValidityYears`, default 100, clamped
-  1..100) so its thumbprint stays stable for the deployment's life — a pin
-  doesn't break on rotation because in practice it never rotates. The expiry
-  date shows on the admin Settings card.
+The DC certificate must be trusted by the OPD machine. Certificate-validation
+bypass is rejected. Basic binds require TLS. An intentionally configured
+non-SSL Negotiate connection requests signing and sealing.
 
-Client server URL: an explicit `SERVER=` (or appsettings `Server:BaseAddress` /
-`OPD_SERVER_URL`) is honoured as-is; the MSI-filename fallback
-(`OpenPrintDeploy - host.msi`) derives `https://<host>:5443`.
+Friendly group-name/SID lookups are cached for ten minutes and the group catalogue
+for sixty seconds. Zone editing uses already-loaded zone data and resolves labels
+in the background. Caching labels is distinct from refreshing a user's Windows
+authentication token after a group-membership change.
 
-### Rotating / renewing the self-signed cert (runbook)
+## HTTPS and certificate lifecycle
 
-A certificate's validity can't be changed in place, so "renewing" or lengthening
-the self-signed cert means **generating a new one** — which gets a **new
-thumbprint** and therefore requires **re-pinning every client**. Because the
-provisioner *reuses* an existing valid cert (it only regenerates within 7 days of
-expiry), a cert minted by an older, shorter-lived build keeps its old expiry
-until you force a regen. To do it deliberately:
+Production requires enabled and enforced HTTPS with a usable certificate. Default
+port is 5443 and no HTTP listener is configured. Provisioning uses `Https:PfxPath`
+when supplied; otherwise Windows creates/reuses a self-signed certificate in the
+Local Computer Personal store. Startup fails if production TLS cannot be enforced.
+Some 0.10.3 comments/log messages still mention HTTP fallback; they do not override
+the production startup check.
 
-1. Ensure the server runs a build with the validity you want
-   (`Https:SelfSignedValidityYears`, default 100).
-2. Admin **Settings → Connection security → Regenerate certificate** (or delete
-   the cert with friendly name *"OpenPrintDeploy Server (self-signed)"* from
-   `certlm.msc` → Personal). The running server keeps serving until restart.
-3. `Restart-Service OpenPrintDeployServer` — a fresh cert is minted on startup.
-4. Read the new thumbprint off the Settings card and re-pin clients
-   (`CERTTHUMBPRINT=` / registry `ServerCertificateThumbprint`).
+Clients use normal certificate validation or an exact configured thumbprint pin.
+The generated client filename carries a host and optional pin; an explicit URL is
+needed for non-default ports. HTTP clients refuse redirects and scope credentials
+to the configured server's Negotiate authentication.
 
-Avoid the whole cycle with an operator/CA cert (`Https:PfxPath`): trust is by
-issuer, so renewals don't change what clients trust — no pinning, no re-pin.
+The self-signed lifetime defaults to 100 years (configurable, clamped to 1–100).
+That implementation default is not an organisation's certificate lifecycle policy.
+A certificate can still be replaced, lost or approach expiry, so retain recovery
+material and monitor expiry. Rotation always changes its thumbprint.
 
-### Migrating an existing HTTP fleet
+For planned self-signed rotation, record existing settings and a recovery point,
+use **Settings → Connection security → Regenerate certificate**, restart the
+service in the maintenance window, then distribute the new pin/trust and verify
+clients. Coordinate the interruption; old pins will not trust the replacement.
+For CA-issued certificates without pins, renewals rely on continued valid chain
+and hostname verification. A configured pin still requires updating even for a
+CA-issued certificate.
 
-HTTPS-only means a client still pointed at `http://host:5080` breaks. To move a
-live fleet gradually instead, set `Https:HttpPort=5080` and
-`Https:RequireHttps=false` so HTTP and HTTPS coexist, reissue clients onto HTTPS
-(with trust distributed), then return to the HTTPS-only defaults and re-open the
-firewall on 5443 / close 5080.
+## Driver preparation and trust boundaries
 
-## Data model
+HTTPS sync issues short-lived, protected tickets scoped to registered assigned
+queues. The SYSTEM service accepts a queue and ticket over a local pipe; it
+does not accept arbitrary URLs, commands, file paths or user credentials. Its
+configuration comes from protected machine settings, not user environment values.
 
-Printer, Zone, ZoneRule, ZonePrinter, ClientDevice, ClientUser, ClientPrinter,
-and ClientActivity.
+The service checks an exact hostname allow-list, downloads only from its configured
+HTTPS origin, validates lengths/hashes and archive paths, and lets Windows validate
+the complete signed package. The server exports locally installed Driver Store
+packages. The client installs the package and verifies the driver identity before
+the user connection is attempted without interactive installation prompts.
 
-### Client activity and reporting
+The protected first pipe instance remains reserved between requests. In 0.10.3,
+response handling waits for the client to read and close, with a deadline, before
+reuse. This fixes responses being discarded by an early disconnect. A prepared
+connection failing with error 3012 gets one retry through standard Windows driver
+selection, still without UI; it is not a general Windows printer repair.
 
-`/sync` records the authenticated user, client-reported device name and client
-version, then returns a correlation ID with the assignment. After applying the
-assignment, updated tray clients send a best-effort `/sync/report` containing
-the results already produced by the reconcile pass: installed, already present,
-adopted, removed, already absent, or failed. Reporting never changes the outcome
-of a printer sync and performs no additional printer enumeration.
+Signed drivers can still be faulty or vulnerable. A trusted server compromise can
+affect the fleet. Publisher approval remains an administrative responsibility;
+OPD neither trusts new publishers automatically nor relaxes Windows driver policy.
+Tickets are reusable bearer capabilities until expiry, not single-use tokens.
+See [driver delivery](driver-delivery.md) for limits, timeouts and pilot requirements.
 
-The admin **Clients** page is device-first because that is how operators locate
-a workstation, then separates users because Windows printer connections are
-per-user. Current client/printer state is updated in place. The append-only
-activity table contains meaningful changes, failures and recoveries rather than
-every unchanged five-minute poll; entries expire after `ClientActivity:RetentionDays`
-(30 days by default). "Online" means seen within
-`ClientActivity:OnlineWindowMinutes` (15 minutes by default).
+## Storage and recovery
 
-### Persistence
+SQLite via EF Core stores printers, zones/rules, explicit removals and client
+activity under `%ProgramData%\OpenPrintDeploy\app.db` by default. Admin grants
+are a separate protected JSON file. Driver ticket keys are machine-protected under
+`%ProgramData%\OpenPrintDeploy-DriverKeys`. Driver package caches are separate.
 
-SQLite via EF Core. Every connection opens with `journal_mode=WAL`,
-`synchronous=NORMAL`, and `busy_timeout=5000` (`SqlitePragmaInterceptor`) so a
-logon-storm of clients serialises on contended writes instead of failing with
-`SQLITE_BUSY` and dropping audit rows. Migrations run on startup; before applying
-any pending migration the server snapshots the DB file (+ `-wal`/`-shm`) to a
-timestamped `.bak` so a bad migration on the live fleet DB is recoverable.
+SQLite uses WAL, `synchronous=NORMAL` and a five-second busy timeout. Migrations
+run on startup. Existing database/WAL/SHM files receive best-effort timestamped
+copies before pending migrations; failure logs a warning and migration continues.
+This is not a verified or independent backup. The current implementation uses
+SQLite; changing a connection string alone does **not** add SQL Server support.
 
-This is sized for a school-scale fleet. For larger or multi-server deployments,
-move `ConnectionStrings:AppDb` to **SQL Server** (the EF model is provider-
-agnostic) — that's the scale path beyond SQLite+WAL, and it removes the
-single-writer ceiling entirely.
+Protected storage rejects unsafe owners, write grants and reparse paths. The
+0.10.2+ MSI migration handles specific legacy directory permissions before service
+startup; it does not permit arbitrary writable storage. Ordinary users should
+not be granted write access to recover a failed startup.
 
-## Zone evaluation
+The client persists per-user management/provenance state. Uninstall stages
+protected machine requests for per-user cleanup and leaves installed drivers
+because other queues may depend on them. Uninstall cleanup is skipped during
+major upgrades. See the [operations runbook](operations.md#backup-and-recovery)
+for rollback limits and a backup inventory.
 
-For a `(user)` request:
+## Scope limits
 
-1. Resolve user's transitive AD group memberships (`tokenGroups`).
-2. Find zones with at least one ZoneRule whose group SID the user holds.
-3. Union the assigned printers across matched zones.
-4. Return `{ printers: [...] }`.
-
-Zone `Priority` is a sort order in the admin UI only — it does not affect
-evaluation.
-
-## Sync triggers
-
-- User logon
-- Every 60 minutes
-- Manual "Sync now" from tray
-
-## Out of scope for v1
-
-- SYSTEM-context Worker service / named-pipe IPC — **rejected, not pending** (see
-  "Why the tray app is sufficient"). A SYSTEM service authenticates as the
-  computer account, which carries the wrong group memberships for user-zone
-  resolution. The per-user tray is the correct identity.
-- macOS / Linux client
-- Driver packaging (trust point-and-print)
-- Cost tracking, quotas, pull printing
-- Cloud-hosted server
+There is no automatic driver rollback, independent driver approval ring, or
+dedicated externally managed drivers mode in the 0.10.3 client. Pausing driver
+updates does not stop normal assignment removal. Remote-server driver export,
+ARM64/x86 delivery, vendor EXE installers, macOS/Linux clients, cost accounting
+and pull printing are outside this implementation's supported scope.
