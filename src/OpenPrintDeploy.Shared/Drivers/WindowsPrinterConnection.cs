@@ -9,11 +9,18 @@ namespace OpenPrintDeploy.Shared.Drivers;
 public static class WindowsPrinterConnection
 {
     public static void Add(string unc, PreparedDriver? prepared)
-        => AddCore(prepared, WindowsDriverStore.Find, (flags, name) =>
+    {
+        // Even an older service can report the vendor driver as ready while
+        // leaving a newer server core package unstaged. Never attempt that
+        // privileged import through the normal user's connection operation.
+        var serverDriver = WindowsDriverStore.ForLocalQueue(unc);
+        WindowsDriverStore.VerifyConnectionCorePackages(unc, serverDriver);
+        AddCore(prepared, WindowsDriverStore.Find, (flags, name) =>
         {
             var info = new ConnectionInfo { Flags = flags, DriverName = name };
             return AddPrinterConnection2(IntPtr.Zero, unc, 1, ref info) ? 0 : Marshal.GetLastWin32Error();
         });
+    }
 
     internal static void AddCore(PreparedDriver? prepared, Func<string, InstalledDriver?> findDriver,
         Func<uint, string?, int> connect)

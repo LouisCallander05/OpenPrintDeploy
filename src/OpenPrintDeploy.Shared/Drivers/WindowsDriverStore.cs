@@ -5,7 +5,10 @@ using System.Text;
 
 namespace OpenPrintDeploy.Shared.Drivers;
 
-public sealed record InstalledDriver(string Name, string Environment, ulong Version, long Date, string InfPath);
+public sealed record InstalledDriver(string Name, string Environment, ulong Version, long Date, string InfPath)
+{
+    public IReadOnlyList<Guid> CoreDependencies { get; init; } = [];
+}
 
 /// <summary>Package-only Windows installation: no vendor executables or legacy copy fallback.</summary>
 [SupportedOSPlatform("windows")]
@@ -69,20 +72,125 @@ public static class WindowsDriverStore
     }
 
     public static void Install(string infPath, string name)
+        => InstallStaged(Stage(infPath), name);
+
+    // UploadPrinterDriverPackage handles ONE signed package, not its separate
+    // core dependencies. Stage every core package before installing the vendor.
+    public static string Stage(string infPath)
     {
         var destination = new StringBuilder(32768);
         var size = (uint)destination.Capacity;
         // UPDP_SILENT_UPLOAD. Windows rejects unsigned/altered packages here.
         Marshal.ThrowExceptionForHR(UploadPrinterDriverPackage(null, infPath, DriverEnvironment, 1,
             IntPtr.Zero, destination, ref size));
-        Marshal.ThrowExceptionForHR(InstallPrinterDriverFromPackage(null, destination.ToString(), name,
+        return destination.ToString();
+    }
+
+    private static void InstallStaged(string infPath, string name)
+    {
+        Marshal.ThrowExceptionForHR(InstallPrinterDriverFromPackage(null, infPath, name,
             DriverEnvironment, 1)); // IPDFP_COPY_ALL_FILES: also refresh an existing driver.
+    }
+
+    public static IReadOnlyList<CoreDriverPackage> CoreDrivers(string? server, IReadOnlyList<Guid> dependencies)
+    {
+        if (dependencies.Count == 0) return [];
+        if (dependencies.Count > CoreDriverRequirements.MaxDependencies || dependencies.Any(d => d == Guid.Empty)
+            || dependencies.Distinct().Count() != dependencies.Count)
+            throw new InvalidDataException("Invalid core driver dependency identifiers.");
+        var multiString = string.Join('\0', dependencies.Select(d => d.ToString("B"))) + "\0\0";
+        var pointer = Marshal.StringToHGlobalUni(multiString);
+        try
+        {
+            var drivers = new CorePrinterDriver[dependencies.Count];
+            Marshal.ThrowExceptionForHR(GetCorePrinterDrivers(server, DriverEnvironment, pointer, (uint)drivers.Length, drivers));
+            var result = drivers.Select(d => new CoreDriverPackage(d.Id, d.Version, d.Date, d.Package)
+            { PackageId = Path.GetFileName(Path.GetDirectoryName(d.Package)) }).ToList();
+            CoreDriverRequirements.Verify(dependencies, result.Select(d => d.Identity).ToList(), result.Select(d => d.Identity).ToList());
+            return result;
+        }
+        finally { Marshal.FreeHGlobal(pointer); }
+    }
+
+    public static void VerifyCorePackages(InstalledDriver driver, IReadOnlyList<CoreDriverPackage>? expected)
+    {
+        if (driver.CoreDependencies.Count == 0) return;
+        var identities = expected?.Select(d => d.Identity).ToList();
+        // Validate completeness before making any native calls with metadata.
+        CoreDriverRequirements.Verify(driver.CoreDependencies, identities, identities ?? []);
+        CoreDriverRequirements.Verify(driver.CoreDependencies, identities,
+            expected!.Where(IsCorePackageAvailable).Select(d => d.Identity).ToList());
+    }
+
+    public static bool IsCorePackageAvailable(CoreDriverPackage expected)
+    {
+        // GetCorePrinterDrivers reports the registered default. It may remain
+        // older even after Windows has successfully staged the server's package.
+        // Check the exact Windows-published package as well as an active newer
+        // core. A mere file in a download cache is never sufficient.
+        if (!string.IsNullOrWhiteSpace(expected.PackageId)
+            && expected.PackageId == Path.GetFileName(expected.PackageId))
+        {
+            var repository = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows),
+                "System32", "DriverStore", "FileRepository");
+            var inf = DriverPackageFiles.Resolve(repository, expected.PackageId + "/" + Path.GetFileName(expected.InfPath));
+            if (File.Exists(inf))
+            {
+                try
+                {
+                    var published = PublishedInf(inf);
+                    // SetupGetInfPublishedName returns e.g. "oem53.inf",
+                    // rather than an absolute path on current Windows builds.
+                    var publishedPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows),
+                        "INF", Path.GetFileName(published));
+                    if (File.Exists(publishedPath)) return true;
+                }
+                catch (Win32Exception) { /* Not a Windows-published package. */ }
+            }
+        }
+        Marshal.ThrowExceptionForHR(CorePrinterDriverInstalled(null, DriverEnvironment, expected.Id,
+            expected.Date, expected.Version, out var installed));
+        return installed;
+    }
+
+    public static void VerifyConnectionCorePackages(string unc, InstalledDriver serverDriver)
+    {
+        var host = unc.Split('\\', StringSplitOptions.RemoveEmptyEntries).First();
+        VerifyCorePackages(serverDriver, CoreDrivers(@"\\" + host, serverDriver.CoreDependencies));
     }
 
     private static InstalledDriver Read(DriverInfo8 info) => new(
         Marshal.PtrToStringUni(info.Name) ?? throw new InvalidDataException("Driver has no name."),
         Marshal.PtrToStringUni(info.Environment) ?? "", info.Version, info.Date,
-        Marshal.PtrToStringUni(info.InfPath) ?? "");
+        Marshal.PtrToStringUni(info.InfPath) ?? "")
+    { CoreDependencies = ReadDependencies(info.CoreDependencies) };
+
+    private static IReadOnlyList<Guid> ReadDependencies(IntPtr pointer)
+    {
+        var result = new List<Guid>();
+        if (pointer == IntPtr.Zero) return result;
+        // A core dependency is a GUID, not a file path or arbitrary string.
+        for (var offset = 0; offset <= CoreDriverRequirements.MaxDependencies * 39;)
+        {
+            if (Marshal.ReadInt16(pointer, offset * 2) == 0) return result;
+            var value = Marshal.PtrToStringUni(pointer + offset * 2, 38);
+            if (!Guid.TryParseExact(value, "B", out var id) || Marshal.ReadInt16(pointer, (offset + 38) * 2) != 0
+                || result.Count == CoreDriverRequirements.MaxDependencies || result.Contains(id))
+                throw new InvalidDataException("Invalid installed core driver dependency list.");
+            result.Add(id);
+            offset += 39;
+        }
+        throw new InvalidDataException("Unterminated core driver dependency list.");
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct CorePrinterDriver
+    {
+        public Guid Id;
+        public long Date;
+        public ulong Version;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)] public string Package;
+    }
 
     [StructLayout(LayoutKind.Sequential)]
     private struct DriverInfo8
@@ -125,4 +233,14 @@ public static class WindowsDriverStore
     [DllImport("winspool.drv", EntryPoint = "InstallPrinterDriverFromPackageW", CharSet = CharSet.Unicode, ExactSpelling = true)]
     private static extern int InstallPrinterDriverFromPackage(string? server, string inf, string name,
         string environment, uint flags);
+
+    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+    [DllImport("winspool.drv", EntryPoint = "GetCorePrinterDriversW", CharSet = CharSet.Unicode, ExactSpelling = true)]
+    private static extern int GetCorePrinterDrivers(string? server, string environment, IntPtr dependencies,
+        uint count, [Out] CorePrinterDriver[] drivers);
+
+    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
+    [DllImport("winspool.drv", EntryPoint = "CorePrinterDriverInstalledW", CharSet = CharSet.Unicode, ExactSpelling = true)]
+    private static extern int CorePrinterDriverInstalled(string? server, string environment, Guid id, long date,
+        ulong version, [MarshalAs(UnmanagedType.Bool)] out bool installed);
 }

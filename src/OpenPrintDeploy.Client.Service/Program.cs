@@ -27,8 +27,8 @@ internal static class Program
                 if (!job.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
                     || Path.GetFileName(job) != "install.json") throw new InvalidDataException("Invalid installation job.");
                 var manifest = JsonSerializer.Deserialize<DriverManifest>(File.ReadAllText(job))!;
-                var inf = DriverPackageFiles.Resolve(Path.Combine(Path.GetDirectoryName(job)!, "files"), manifest.InfPath);
-                WindowsDriverStore.Install(inf, manifest.DriverName);
+                var files = Path.Combine(Path.GetDirectoryName(job)!, "files");
+                DriverPackageInstallation.Install(manifest, files);
                 return 0;
             }
             catch (Exception ex) { Console.Error.WriteLine(ex); return ex.HResult == 0 ? 1 : ex.HResult; }

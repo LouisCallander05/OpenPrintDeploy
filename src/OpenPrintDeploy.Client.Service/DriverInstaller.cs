@@ -10,7 +10,9 @@ namespace OpenPrintDeploy.Client.Service;
 
 internal sealed class DriverInstaller(ILogger<DriverInstaller> logger)
 {
-    public static string StorageRoot => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "OpenPrintDeploy-DriverClient");
+    // A fresh protected cache also avoids adopting legacy stamps/directories
+    // whose permissions may have been changed outside the service.
+    public static string StorageRoot => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "OpenPrintDeploy-DriverClient-v2");
 
     public async Task<DriverResponse> PrepareAsync(DriverRequest request, CancellationToken ct)
     {
@@ -30,12 +32,33 @@ internal sealed class DriverInstaller(ILogger<DriverInstaller> logger)
             || manifest.Sha256.Length != 64 || !manifest.Sha256.All(Uri.IsHexDigit))
             throw new InvalidDataException("Server returned an invalid driver manifest.");
         var root = PrivateDirectory.Create(StorageRoot);
+        if (manifest.CoreDrivers is { } coreDrivers)
+        {
+            CoreDriverRequirements.Validate(coreDrivers.Select(d => d.Identity).ToList());
+            foreach (var core in coreDrivers)
+                if (!DriverPackageFiles.Resolve(root, core.InfPath).EndsWith(".inf", StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidDataException("Core driver INF is invalid.");
+        }
         var stamp = Path.Combine(root, Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(manifest.DriverName))) + ".installed");
         var current = WindowsDriverStore.Find(manifest.DriverName);
         if (current is not null && current.Environment == manifest.Environment
             && current.Version == manifest.Version && current.Date == manifest.Date
             && File.Exists(stamp) && (await File.ReadAllTextAsync(stamp, ct)).Equals(manifest.Sha256, StringComparison.OrdinalIgnoreCase))
-            return new(true, Driver: new(current.Name, current.Environment, current.Version, current.Date));
+        {
+            try
+            {
+                WindowsDriverStore.VerifyCorePackages(current, manifest.CoreDrivers);
+                return new(true, Driver: new(current.Name, current.Environment, current.Version, current.Date));
+            }
+            catch (Exception ex) when (ex is InvalidOperationException or System.Runtime.InteropServices.COMException)
+            {
+                // A stamp for the vendor package is not proof that its core
+                // packages still exist. Re-stage the verified bundle below.
+                logger.LogInformation("Re-preparing {Driver}: {Reason}", current.Name, ex.Message);
+            }
+        }
+        if (current is { CoreDependencies.Count: > 0 } && manifest.CoreDrivers is null)
+            throw new InvalidOperationException("Update the OPD server: this driver requires core packages not included in its preparation metadata.");
         var work = Path.Combine(root, Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(work);
         try
@@ -94,6 +117,7 @@ internal sealed class DriverInstaller(ILogger<DriverInstaller> logger)
             if (current is null || current.Environment != manifest.Environment
                 || current.Version != manifest.Version || current.Date != manifest.Date)
                 throw new IOException("Installed driver does not match the print server version.");
+            WindowsDriverStore.VerifyCorePackages(current, manifest.CoreDrivers);
             await File.WriteAllTextAsync(stamp, manifest.Sha256, ct);
             logger.LogInformation("Prepared {Driver} version {Version} for {Queue}", manifest.DriverName, manifest.Version, request.UncPath);
             return new(true, Driver: new(current.Name, current.Environment, current.Version, current.Date));

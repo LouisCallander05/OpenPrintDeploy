@@ -37,8 +37,12 @@ public sealed class WindowsPrinterRepairOperations : IPrinterRepairOperations
     {
         // Bypass the local spooler cache. An unavailable server or changed
         // package must defer repair before any connection is disconnected.
-        if (!Matches(WindowsDriverStore.ForPrinterHandle(handle), driver))
+        var serverDriver = WindowsDriverStore.ForPrinterHandle(handle);
+        if (!Matches(serverDriver, driver))
             throw new InvalidOperationException("The live server driver changed; retry after driver preparation.");
+        // This is deliberately before Capture/Disconnect. Vendor identity
+        // alone is insufficient when Point and Print needs a newer core INF.
+        WindowsDriverStore.VerifyConnectionCorePackages(unc, serverDriver);
         var mode = ReadDevMode(handle, 8)
             ?? throw new InvalidOperationException("The server did not supply printer defaults.");
         return (ReadFields(mode) & 0x1000) != 0 && BinaryPrimitives.ReadInt16LittleEndian(mode.AsSpan(94)) is 2 or 3;

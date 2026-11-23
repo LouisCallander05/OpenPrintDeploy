@@ -51,6 +51,22 @@ public sealed class PrinterConnectionRepairerTests
     }
 
     [Fact]
+    public async Task OutdatedCoreDependencyLeavesExistingConnectionAndBackupUntouched()
+    {
+        var events = new List<string>();
+        var backups = new Backups(events);
+        var id = Guid.NewGuid();
+        var operations = new Operations(events)
+        {
+            OnServerCheck = () => CoreDriverRequirements.Verify([id], [new(id, 33822, 123)], [new(id, 33648, 123)])
+        };
+        await Assert.ThrowsAsync<InvalidOperationException>(() => new PrinterConnectionRepairer(operations, backups)
+            .CheckAndRepairAsync(Printer, Driver, default));
+        Assert.Equal(new[] { "verify", "server" }, events);
+        Assert.Null(backups.Value);
+    }
+
+    [Fact]
     public async Task ReconnectFailureAttemptsBoundedRecoveryAndRetainsOriginalSnapshot()
     {
         var events = new List<string>();
@@ -178,6 +194,7 @@ public sealed class PrinterConnectionRepairerTests
         public bool Duplex { get; init; } = true;
         public bool ServerDuplex { get; init; } = true;
         public Action? OnDisconnect { get; init; }
+        public Action? OnServerCheck { get; init; }
         private void Record(string operation)
         {
             events.Add(operation);
@@ -185,7 +202,7 @@ public sealed class PrinterConnectionRepairerTests
         }
         public void VerifyDriver(string unc, PreparedDriver driver) => Record("verify");
         public bool SupportsDuplex(string unc) { Record("duplex"); return Duplex; }
-        public bool ServerDefaultsToDuplex(string unc, PreparedDriver driver) { Record("server"); return ServerDuplex; }
+        public bool ServerDefaultsToDuplex(string unc, PreparedDriver driver) { Record("server"); OnServerCheck?.Invoke(); return ServerDuplex; }
         public bool HasPendingUserJobs(string unc) { Record("jobs"); return Jobs; }
         public PrinterRepairBackup Capture(string unc, PreparedDriver driver) { Record("capture"); return Snapshot; }
         public void Disconnect(string unc) { Record("disconnect"); OnDisconnect?.Invoke(); }
