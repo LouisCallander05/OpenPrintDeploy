@@ -57,6 +57,7 @@ public sealed class ClientActivityTracker
                 : ClientSyncStatuses.Deferred;
             clientUser.AssignedPrinterCount = response.Printers.Count;
             clientUser.LastError = null;
+            clientUser.SupportsPrinterRepair = request.SupportsPrinterRepair;
 
             if (isNewUser)
             {
@@ -110,7 +111,10 @@ public sealed class ClientActivityTracker
             {
                 foreach (var state in existing.Where(p => !desired.ContainsKey(p.NormalizedUncPath)))
                 {
-                    if (state.Status != ClientPrinterStatuses.RemovalPending)
+                    // Preserve a failed removal and its error until the next
+                    // report. Resetting it here makes an unchanged failure look
+                    // like a new transition on every sync.
+                    if (state.Status is not (ClientPrinterStatuses.RemovalPending or ClientPrinterStatuses.RemovalFailed))
                     {
                         state.Status = ClientPrinterStatuses.RemovalPending;
                         state.LastOperation = "Remove";
@@ -193,9 +197,29 @@ public sealed class ClientActivityTracker
                 .Where(p => p.ClientUserId == clientUser.Id)
                 .ToListAsync(ct);
 
+            var confirmedRemovals = new HashSet<string>(StringComparer.Ordinal);
+            if (report.Printers.Any(p => p.Operation == PrinterSyncOperation.Removed && p.Succeeded && p.AlreadyAbsent))
+            {
+                // Use retained audit events instead of a transient printer row:
+                // successful removals delete that row, and global removal rules
+                // recreate it on every sync. Query only the latest event per raw
+                // UNC, then normalize case variants together in memory.
+                var history = db.ClientActivities.AsNoTracking()
+                    .Where(a => a.ClientUserId == clientUser.Id && a.PrinterUncPath != null);
+                var latestIds = history.GroupBy(a => a.PrinterUncPath).Select(g => g.Max(a => a.Id));
+                var latest = await history.Where(a => latestIds.Contains(a.Id))
+                    .Select(a => new { a.Id, a.PrinterUncPath, a.Type })
+                    .ToListAsync(ct);
+                confirmedRemovals = latest.OrderByDescending(a => a.Id)
+                    .DistinctBy(a => Normalize(a.PrinterUncPath!, 260))
+                    .Where(a => a.Type == "Printer removed")
+                    .Select(a => Normalize(a.PrinterUncPath!, 260))
+                    .ToHashSet(StringComparer.Ordinal);
+            }
+
             foreach (var result in report.Printers)
             {
-                ApplyPrinterResult(db, clientUser, states, result, report.SyncId, now);
+                ApplyPrinterResult(db, clientUser, states, confirmedRemovals, result, report.SyncId, now);
             }
 
             if (report.Status == SyncReportStatus.Failed
@@ -228,6 +252,7 @@ public sealed class ClientActivityTracker
         AppDbContext db,
         ClientUserEntity clientUser,
         List<ClientPrinterEntity> states,
+        HashSet<string> confirmedRemovals,
         PrinterSyncResultDto result,
         Guid syncId,
         DateTimeOffset now)
@@ -242,14 +267,21 @@ public sealed class ClientActivityTracker
                 ? "an administrator required its removal"
                 : "it was no longer assigned";
             var resultText = result.AlreadyAbsent ? "was already absent" : "was removed";
-            AddActivity(
-                clientUser,
-                "Printer removed",
-                $"{displayName ?? result.UncPath} {resultText} because {reason}.",
-                syncId,
-                now,
-                displayName,
-                result.UncPath);
+            // Continue enforcing the rule and clear pending state every time,
+            // but record absence only once until another printer event changes
+            // its history. A real removal is always a new audit event.
+            if (!result.AlreadyAbsent || !confirmedRemovals.Contains(normalizedUnc))
+            {
+                AddActivity(
+                    clientUser,
+                    "Printer removed",
+                    $"{displayName ?? result.UncPath} {resultText} because {reason}.",
+                    syncId,
+                    now,
+                    displayName,
+                    result.UncPath);
+            }
+            confirmedRemovals.Add(normalizedUnc);
             if (state is not null)
             {
                 db.ClientPrinters.Remove(state);
@@ -257,6 +289,8 @@ public sealed class ClientActivityTracker
             }
             return;
         }
+
+        confirmedRemovals.Remove(normalizedUnc);
 
         if (state is null)
         {

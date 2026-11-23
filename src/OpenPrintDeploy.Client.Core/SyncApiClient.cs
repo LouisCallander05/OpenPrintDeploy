@@ -24,10 +24,11 @@ public sealed class SyncApiClient
         CancellationToken ct = default,
         Guid? syncId = null,
         string? clientVersion = null,
-        string? deviceId = null)
+        string? deviceId = null,
+        bool supportsPrinterRepair = false)
     {
         using var response = await _http.PostAsJsonAsync(
-            "sync", new SyncRequestDto(machineName, syncId, clientVersion, deviceId), ct);
+            "sync", new SyncRequestDto(machineName, syncId, clientVersion, deviceId, supportsPrinterRepair), ct);
         response.EnsureSuccessStatusCode();
         var result = await response.Content.ReadFromJsonAsync<SyncResponseDto>(ct);
         // A 200 with an empty/unparseable body is a server hiccup, not an
@@ -39,6 +40,12 @@ public sealed class SyncApiClient
     public async Task ReportAsync(SyncReportDto report, CancellationToken ct = default)
     {
         using var response = await _http.PostAsJsonAsync("sync/report", report, ct);
+        response.EnsureSuccessStatusCode();
+    }
+
+    public async Task ReportRepairAsync(PrinterRepairReportDto report, CancellationToken ct = default)
+    {
+        using var response = await _http.PostAsJsonAsync("sync/repair-report", report, ct);
         response.EnsureSuccessStatusCode();
     }
 

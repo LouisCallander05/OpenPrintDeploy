@@ -23,4 +23,5 @@ public sealed record SyncResponseDto(
     IReadOnlyList<PrinterDto> Printers,
     bool Authoritative = true,
     IReadOnlyList<string>? RemovePrinters = null,
-    Guid? SyncId = null);
+    Guid? SyncId = null,
+    Guid? RepairRequestId = null);

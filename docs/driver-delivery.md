@@ -55,18 +55,51 @@ server compromise or a faulty signed driver remains a fleet-wide risk.
 
 The service returns the installed driver's name, environment, version and date
 after verifying them. The tray rechecks that identity and creates the per-user
-connection with `AddPrinterConnection2W`, selecting the prepared local driver
-for rendering (`PRINTER_CONNECTION_MISMATCH`). Package updates remain the
-service's responsibility. Every connection attempt sets
+connection with `AddPrinterConnection2W`, using standard shared-printer driver
+selection with a null driver name. The SYSTEM service still installs the signed
+package first, so standard users do not need local administrator rights to
+install that package. Package updates remain the service's responsibility.
+Do not set `PRINTER_CONNECTION_MISMATCH`: that flag substitutes a local rendering
+driver and can break vendor device/finishing options such as duplex on Follow Me
+queues. Every connection attempt sets
 `PRINTER_CONNECTION_NO_UI`: a policy block becomes a reported failure instead
 of opening an administrator credential dialog. This flag alone does not make
-a blocked installation succeed. Since 0.10.3, an explicit prepared-driver
-connection returning error 3012 is retried once using standard Windows driver
-selection, still with `PRINTER_CONNECTION_NO_UI`. Other errors are not retried
-through this fallback. A missing or changed prepared driver still blocks both
-attempts. Logs identify a successful fallback or report the final error if both
-attempts fail. Validate rendering, finishing options and
+a blocked installation succeed. A missing or changed prepared driver blocks the
+connection attempt. Connection failures report the Windows error and retry on
+the next sync. Validate rendering, finishing options and
 server-side accounting with each vendor driver in the pilot.
+
+The duplex migration client records a per-user `ConnectionRevision` for each
+managed connection. Legacy entries (including adopted connections OPD already
+manages) default to revision 0; the corrected connection method is revision 1.
+On a successful authoritative sync, an assigned legacy connection is reconnected
+once after its prepared driver and live server driver are verified. Removed,
+unassigned and unconfirmed queues are excluded. A user's pending print jobs
+defer the repair. Newly installed or newly adopted connections start at revision
+1. A client version change alone does not cause another reconnect.
+
+Before disconnecting, the client saves a recovery snapshot under
+`%LOCALAPPDATA%\OpenPrintDeploy\connection-repairs\v1`. It restores the default
+printer when applicable and merges supported standard public printing settings
+into a fresh driver DEVMODE, validating them through the driver. Old private
+driver configuration is deliberately not reapplied: vendor finishing options,
+accounting codes and other vendor-specific preferences can reset and must be
+checked in the pilot. Server queues, jobs and driver packages are never deleted.
+
+A successful migration records revision 1 in `managed-printers.json`. A failure
+leaves the revision pending and is logged/reported for retry. A durable recovery
+stage avoids another disconnect when recovering preferences after a successful
+reconnect. A missing connection is re-added normally before recovery. Completed
+snapshots are archived only after the revised managed state saves successfully.
+The client verifies duplex after migration when the live server defaults require
+it; this check is not used to guess which legacy connections were affected.
+
+Set `ConnectionRepairsEnabled` to DWORD/string `0` under
+`HKLM\SOFTWARE\OpenPrintDeploy\Client` to pause pending migrations; delete it or
+set it to `1` to resume. Normal driver preparation and reconciliation continue.
+Perform a two-page physical duplex test before fleet deployment. Increment the
+connection revision only for a future change that needs existing connections
+recreated, not for routine client releases.
 
 Error `0x800F0242` means the package's Authenticode publisher is not yet trusted
 on the client. A signed package is not necessarily approved for silent install.

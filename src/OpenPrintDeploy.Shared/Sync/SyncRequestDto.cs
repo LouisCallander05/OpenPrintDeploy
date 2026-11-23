@@ -15,4 +15,5 @@ public sealed record SyncRequestDto(
     string? MachineName,
     Guid? SyncId = null,
     string? ClientVersion = null,
-    string? DeviceId = null);
+    string? DeviceId = null,
+    bool SupportsPrinterRepair = false);

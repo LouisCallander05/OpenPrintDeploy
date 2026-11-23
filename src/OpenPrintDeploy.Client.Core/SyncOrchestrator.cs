@@ -13,6 +13,7 @@ public sealed record SyncResult(
     SyncReportStatus ReportStatus = SyncReportStatus.Synced)
 {
     public IReadOnlyList<PrinterApplyError> Failures { get; init; } = [];
+    public IReadOnlyCollection<string> CompletedConnectionRepairs { get; init; } = [];
 }
 
 /// <summary>
@@ -27,12 +28,17 @@ public sealed class SyncOrchestrator
     private readonly SyncApiClient _api;
     private readonly IPrinterApplier _applier;
     private readonly IDriverPreparer? _drivers;
+    private readonly IPrinterConnectionRepairer? _repairs;
+    private readonly RemotePrinterRepairRunner? _remoteRepairs;
 
-    public SyncOrchestrator(SyncApiClient api, IPrinterApplier applier, IDriverPreparer? drivers = null)
+    public SyncOrchestrator(SyncApiClient api, IPrinterApplier applier, IDriverPreparer? drivers = null,
+        IPrinterConnectionRepairer? repairs = null, IRemoteRepairStateStore? remoteState = null)
     {
         _api = api;
         _applier = applier;
         _drivers = drivers;
+        _repairs = repairs;
+        _remoteRepairs = repairs is not null && remoteState is not null ? new(api, repairs, remoteState) : null;
     }
 
     public async Task<SyncResult> SyncOnceAsync(
@@ -52,7 +58,10 @@ public sealed class SyncOrchestrator
                 ct,
                 requestedSyncId,
                 clientVersion,
-                deviceId);
+                deviceId,
+                supportsPrinterRepair: _remoteRepairs is not null && !string.IsNullOrWhiteSpace(deviceId));
+            var hasRemoteRepair = desired.Authoritative && desired.RepairRequestId is { } requestId
+                && requestId != Guid.Empty && _remoteRepairs is not null && !string.IsNullOrWhiteSpace(deviceId);
             var currentlyInstalled = await _applier.EnumerateInstalledAsync(ct);
             var plan = PrinterReconciler.Reconcile(
                 desired,
@@ -69,12 +78,47 @@ public sealed class SyncOrchestrator
             plan = plan with
             {
                 PreparedDrivers = preparation.Drivers,
+                ToAdopt = plan.ToAdopt.Where(unc => !plan.ToRemove.Contains(unc, StringComparer.OrdinalIgnoreCase)).ToList(),
                 ToAdd = plan.ToAdd.Where(p => !blocked.Contains(p.UncPath)
                     && !plan.ToRemove.Contains(p.UncPath, StringComparer.OrdinalIgnoreCase)).ToList()
             };
             var applied = await _applier.ApplyAsync(plan, ct);
+            var repairFailures = new List<PrinterApplyError>();
+            var migratedConnections = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (_repairs is not null && desired.Authoritative && !hasRemoteRepair)
+            {
+                var pending = previouslyManaged.Where(m =>
+                        m.ConnectionRevision < PrinterConnectionMigration.CurrentRevision)
+                    .Select(m => m.Unc).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                var failedAdds = applied.Failed.Select(f => f.Printer.UncPath)
+                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                foreach (var printer in desired.Printers.DistinctBy(p => p.UncPath, StringComparer.OrdinalIgnoreCase))
+                {
+                    if (!pending.Contains(printer.UncPath) || blocked.Contains(printer.UncPath)
+                        || failedAdds.Contains(printer.UncPath)
+                        || plan.ToRemove.Contains(printer.UncPath, StringComparer.OrdinalIgnoreCase))
+                        continue;
+                    if (!preparation.Drivers.TryGetValue(printer.UncPath, out var driver))
+                    {
+                        repairFailures.Add(new PrinterApplyError(printer, "Connection repair pending: waiting for verified driver preparation."));
+                        continue;
+                    }
+
+                    ct.ThrowIfCancellationRequested();
+                    try
+                    {
+                        await _repairs.CheckAndRepairAsync(printer, driver, ct,
+                            applied.Added.Any(p => p.UncPath.Equals(printer.UncPath, StringComparison.OrdinalIgnoreCase)));
+                        migratedConnections.Add(printer.UncPath);
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        repairFailures.Add(new PrinterApplyError(printer, $"Connection repair pending: {ex.Message}"));
+                    }
+                }
+            }
             var outcome = new ApplyOutcome(applied.Added,
-                applied.Failed.Concat(driverFailures).ToList(), applied.Removed, applied.FailedRemovals);
+                applied.Failed.Concat(driverFailures).Concat(repairFailures).ToList(), applied.Removed, applied.FailedRemovals);
 
         // Rebuild the managed set, preserving each printer's provenance. The
         // `seen` set both de-duplicates and enforces precedence — the first
@@ -103,7 +147,9 @@ public sealed class SyncOrchestrator
 
                 if (seen.Add(m.Unc))
                 {
-                    managed.Add(m);
+                    managed.Add(migratedConnections.Contains(m.Unc)
+                        ? m with { ConnectionRevision = PrinterConnectionMigration.CurrentRevision }
+                        : m);
                 }
             }
 
@@ -111,7 +157,10 @@ public sealed class SyncOrchestrator
             {
                 if (seen.Add(p.UncPath))
                 {
-                    managed.Add(new ManagedPrinter(p.UncPath, PrinterOrigin.Created));
+                    managed.Add(new ManagedPrinter(p.UncPath, PrinterOrigin.Created)
+                    {
+                        ConnectionRevision = PrinterConnectionMigration.CurrentRevision
+                    });
                 }
             }
 
@@ -119,8 +168,23 @@ public sealed class SyncOrchestrator
             {
                 if (seen.Add(unc))
                 {
-                    managed.Add(new ManagedPrinter(unc, PrinterOrigin.Adopted));
+                    managed.Add(new ManagedPrinter(unc, PrinterOrigin.Adopted)
+                    {
+                        ConnectionRevision = PrinterConnectionMigration.CurrentRevision
+                    });
                 }
+            }
+
+            if (hasRemoteRepair)
+            {
+                var remote = await _remoteRepairs!.RunAsync(desired.RepairRequestId!.Value, deviceId!,
+                    desired.Printers.Where(p => seen.Contains(p.UncPath)
+                        && !plan.ToRemove.Contains(p.UncPath, StringComparer.OrdinalIgnoreCase)).ToList(),
+                    preparation.Drivers, outcome.Failed, applied.Added.Select(p => p.UncPath).ToList(), ct);
+                migratedConnections.UnionWith(remote.Completed);
+                managed = managed.Select(m => migratedConnections.Contains(m.Unc)
+                    ? m with { ConnectionRevision = Math.Max(m.ConnectionRevision, PrinterConnectionMigration.CurrentRevision) } : m).ToList();
+                outcome = new ApplyOutcome(outcome.Added, outcome.Failed.Concat(remote.Failures).ToList(), outcome.Removed, outcome.FailedRemovals);
             }
 
             var addedNames = outcome.Added.Select(p => p.DisplayName).ToList();
@@ -142,7 +206,10 @@ public sealed class SyncOrchestrator
                     DeviceId: deviceId), ct);
             }
 
-            return new SyncResult(managed, addedNames, failedNames, reportStatus) { Failures = outcome.Failed };
+            return new SyncResult(managed, addedNames, failedNames, reportStatus)
+            {
+                Failures = outcome.Failed, CompletedConnectionRepairs = migratedConnections
+            };
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {

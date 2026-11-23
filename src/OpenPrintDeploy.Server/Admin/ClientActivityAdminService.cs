@@ -111,8 +111,7 @@ public sealed class ClientActivityAdminService
                 a.PrinterUncPath,
                 a.Error))
             .ToListAsync(ct);
-        var activities = activityRows
-            .OrderByDescending(a => a.OccurredAt)
+        var activities = ClientActivityHistory.CollapseRepeatedAbsenceConfirmations(activityRows)
             .Take(100)
             .ToList();
 
@@ -139,7 +138,12 @@ public sealed class ClientActivityAdminService
                         p.LastOperation,
                         p.UpdatedAt,
                         p.LastError))
-                    .ToList()))
+                    .ToList())
+            {
+                CanRepairPrinters = u.SupportsPrinterRepair && !string.IsNullOrWhiteSpace(device.DeviceIdentifier),
+                Repair = u.RepairRequestId is null ? null : new ClientRepairDetails(u.RepairStatus ?? "Pending",
+                    u.RepairRequestedAt, u.RepairStartedAt, u.RepairCompletedAt, u.RepairRequestedBy, u.RepairError)
+            })
             .ToList();
 
         return new ClientDeviceDetails(
@@ -186,7 +190,14 @@ public sealed record ClientUserDetails(
     int SyncedPrinterCount,
     int FailedPrinterCount,
     string? LastError,
-    IReadOnlyList<ClientPrinterDetails> Printers);
+    IReadOnlyList<ClientPrinterDetails> Printers)
+{
+    public bool CanRepairPrinters { get; init; }
+    public ClientRepairDetails? Repair { get; init; }
+}
+
+public sealed record ClientRepairDetails(string Status, DateTimeOffset? RequestedAt,
+    DateTimeOffset? StartedAt, DateTimeOffset? CompletedAt, string? RequestedBy, string? Error);
 
 public sealed record ClientPrinterDetails(
     string? DisplayName,

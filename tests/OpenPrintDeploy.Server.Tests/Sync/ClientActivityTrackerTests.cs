@@ -120,6 +120,109 @@ public sealed class ClientActivityTrackerTests : IAsyncDisposable
     }
 
     [Fact]
+    public async Task RepeatedGlobalAbsenceConfirmationsRecordOneEventAndStillClearPendingState()
+    {
+        await ReportRemovalAsync(alreadyAbsent: true);
+        await ReportRemovalAsync(alreadyAbsent: true, unc: @"\\PRINTSRV\OLD");
+        await ReportRemovalAsync(alreadyAbsent: true);
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.Equal(1, await db.ClientActivities.CountAsync(a => a.Type == "Printer removed"));
+        Assert.Empty(await db.ClientPrinters.ToListAsync());
+        Assert.Equal(ClientSyncStatuses.Synced, (await db.ClientUsers.SingleAsync()).LastSyncStatus);
+    }
+
+    [Fact]
+    public async Task ActualRemovalIsAlwaysRecordedEvenAfterEarlierConfirmation()
+    {
+        await ReportRemovalAsync(alreadyAbsent: false);
+        await ReportRemovalAsync(alreadyAbsent: true);
+        await ReportRemovalAsync(alreadyAbsent: false);
+        await ReportRemovalAsync(alreadyAbsent: true);
+        await using var db = await _factory.CreateDbContextAsync();
+        var removals = await db.ClientActivities.Where(a => a.Type == "Printer removed").ToListAsync();
+        Assert.Equal(2, removals.Count);
+        Assert.All(removals, a => Assert.Contains("was removed because", a.Summary));
+    }
+
+    [Fact]
+    public async Task UnchangedRemovalFailureDoesNotSpamButChangedErrorAndRecoveryAreRecorded()
+    {
+        await ReportRemovalAsync(error: "Access denied");
+        await ReportRemovalAsync(error: "Access denied");
+        await ReportRemovalAsync(error: "Spooler unavailable");
+        await ReportRemovalAsync(alreadyAbsent: true);
+        await ReportRemovalAsync(alreadyAbsent: true);
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.Equal(2, await db.ClientActivities.CountAsync(a => a.Type == "Removal failed"));
+        Assert.Equal(1, await db.ClientActivities.CountAsync(a => a.Type == "Printer removed"));
+        Assert.Empty(await db.ClientPrinters.ToListAsync());
+    }
+
+    [Fact]
+    public async Task NewAssignmentResetsAbsenceConfirmationHistory()
+    {
+        await ReportRemovalAsync(alreadyAbsent: true);
+        var syncId = Guid.NewGuid();
+        var printer = new PrinterDto("Old printer", @"\\printsrv\old");
+        await _tracker.RecordSyncStartedAsync(@"DOMAIN\alice", new SyncRequestDto("PC-001", syncId),
+            new SyncResponseDto([printer], SyncId: syncId), default);
+        await _tracker.RecordReportAsync(@"DOMAIN\alice", new SyncReportDto(syncId, "PC-001", null, SyncReportStatus.Synced,
+            [new PrinterSyncResultDto(printer.DisplayName, printer.UncPath, PrinterSyncOperation.Present, true)]), default);
+        await ReportRemovalAsync(alreadyAbsent: true);
+        await ReportRemovalAsync(alreadyAbsent: true);
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.Equal(2, await db.ClientActivities.CountAsync(a => a.Type == "Printer removed"));
+    }
+
+    [Fact]
+    public async Task RemovalConfirmationsRemainSeparateForEachDeviceAndUser()
+    {
+        await ReportRemovalAsync(alreadyAbsent: true);
+        await ReportRemovalAsync(alreadyAbsent: true, username: @"DOMAIN\bob");
+        await ReportRemovalAsync(alreadyAbsent: true, machine: "PC-002");
+        await using var db = await _factory.CreateDbContextAsync();
+        Assert.Equal(3, await db.ClientActivities.CountAsync(a => a.Type == "Printer removed"));
+    }
+
+    [Fact]
+    public async Task OldHistorySpamIsCollapsedInAdminViewWithoutDeletingAuditRows()
+    {
+        await ReportRemovalAsync(alreadyAbsent: true);
+        await using (var db = await _factory.CreateDbContextAsync())
+        {
+            var original = await db.ClientActivities.SingleAsync(a => a.Type == "Printer removed");
+            db.ClientActivities.Add(new ClientActivityEntity
+            {
+                ClientUserId = original.ClientUserId,
+                ClientUser = await db.ClientUsers.SingleAsync(),
+                Type = original.Type,
+                Summary = original.Summary,
+                PrinterUncPath = original.PrinterUncPath,
+                OccurredAt = original.OccurredAt.AddMinutes(5)
+            });
+            await db.SaveChangesAsync();
+        }
+        var admin = new ClientActivityAdminService(_factory);
+        var device = Assert.Single(await admin.GetDevicesAsync());
+        var details = await admin.GetDeviceAsync(device.Id);
+        Assert.Single(details!.Activities, a => a.Type == "Printer removed");
+        await using var verify = await _factory.CreateDbContextAsync();
+        Assert.Equal(2, await verify.ClientActivities.CountAsync(a => a.Type == "Printer removed"));
+    }
+
+    private async Task ReportRemovalAsync(bool alreadyAbsent = false, string? error = null,
+        string unc = @"\\printsrv\old", string username = @"DOMAIN\alice", string machine = "PC-001")
+    {
+        var syncId = Guid.NewGuid();
+        await _tracker.RecordSyncStartedAsync(username, new SyncRequestDto(machine, syncId),
+            new SyncResponseDto([], RemovePrinters: [unc], SyncId: syncId), default);
+        await _tracker.RecordReportAsync(username, new SyncReportDto(syncId, machine, null,
+            error is null ? SyncReportStatus.Synced : SyncReportStatus.Partial,
+            [new PrinterSyncResultDto(null, unc, PrinterSyncOperation.Removed, error is null,
+                Error: error, RemovalReason: PrinterRemovalReason.GlobalRemoval, AlreadyAbsent: alreadyAbsent)]), default);
+    }
+
+    [Fact]
     public async Task StableDeviceIds_DoNotMergeWithCollidingLegacyName()
     {
         const string legacyName = "3931-STU-S-PW0B";

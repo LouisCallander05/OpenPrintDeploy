@@ -38,6 +38,7 @@ public sealed class SyncCoordinator : IDisposable
     private readonly string? _deviceId;
     private readonly string? _clientVersion;
     private readonly IReadOnlyList<string> _allowedPrintServers;
+    private readonly WindowsPrinterConnectionRepairer _connectionRepairs;
 
     private HttpClient? _http;
     private SyncOrchestrator? _orchestrator;
@@ -53,6 +54,7 @@ public sealed class SyncCoordinator : IDisposable
         _deviceId = ResolveDeviceId();
         _clientVersion = clientVersion;
         _allowedPrintServers = allowedPrintServers ?? [];
+        _connectionRepairs = new WindowsPrinterConnectionRepairer(_allowedPrintServers);
     }
 
     public async Task<SyncOutcome> RunOnceAsync(CancellationToken ct = default)
@@ -144,6 +146,9 @@ public sealed class SyncCoordinator : IDisposable
 
     private async Task<SyncOutcome> SyncWithCurrentClientAsync(CancellationToken ct)
     {
+        // Keep multiple upgraded trays in the same profile from racing their
+        // migration decisions and reconnecting the same queue twice.
+        using var stateLock = _state.AcquireSync();
         var managed = _state.Load();
         var result = await _orchestrator!.SyncOnceAsync(
             _machineName,
@@ -154,6 +159,7 @@ public sealed class SyncCoordinator : IDisposable
         foreach (var failure in result.Failures)
             ClientLog.Error($"Printer sync: {failure.Printer.UncPath}: {failure.Message}");
         _state.Save(result.ManagedPrinters);
+        _connectionRepairs.CompleteSavedMigrations(result.CompletedConnectionRepairs);
         return SyncOutcome.Success(result.ManagedPrinters.Count, result.AddedNames, result.FailedNames);
     }
 
@@ -171,7 +177,8 @@ public sealed class SyncCoordinator : IDisposable
         }
 
         _http = client;
-        _orchestrator = new SyncOrchestrator(new SyncApiClient(_http), new WindowsPrinterApplier(_allowedPrintServers), new DriverServiceClient());
+        _orchestrator = new SyncOrchestrator(new SyncApiClient(_http), new WindowsPrinterApplier(_allowedPrintServers),
+            new DriverServiceClient(), _connectionRepairs, CreateRemoteRepairState());
         return true;
     }
 
@@ -232,8 +239,12 @@ public sealed class SyncCoordinator : IDisposable
     {
         _http?.Dispose();
         _http = client;
-        _orchestrator = new SyncOrchestrator(new SyncApiClient(_http), new WindowsPrinterApplier(_allowedPrintServers), new DriverServiceClient());
+        _orchestrator = new SyncOrchestrator(new SyncApiClient(_http), new WindowsPrinterApplier(_allowedPrintServers),
+            new DriverServiceClient(), _connectionRepairs, CreateRemoteRepairState());
     }
+
+    private static FileRemoteRepairStateStore CreateRemoteRepairState() => new(System.IO.Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "OpenPrintDeploy", "remote-repairs"));
 
     public void Dispose() => _http?.Dispose();
 }

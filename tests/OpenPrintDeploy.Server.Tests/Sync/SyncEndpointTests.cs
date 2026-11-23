@@ -9,6 +9,10 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.EntityFrameworkCore;
 using OpenPrintDeploy.Server.Data;
 using OpenPrintDeploy.Shared.Sync;
+using OpenPrintDeploy.Shared.Drivers;
+using OpenPrintDeploy.Client.Core;
+using OpenPrintDeploy.Server.Admin;
+using System.Security.Claims;
 using Xunit;
 
 namespace OpenPrintDeploy.Server.Tests.Sync;
@@ -80,6 +84,9 @@ public sealed class SyncEndpointTests : IClassFixture<SyncEndpointTests.TestServ
         var response = await client.PostAsJsonAsync("/sync", new SyncRequestDto(MachineName: null));
 
         Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        var repairReport = await client.PostAsJsonAsync("/sync/repair-report",
+            new PrinterRepairReportDto(Guid.NewGuid(), "DEVICE", PrinterRepairStatus.Completed));
+        Assert.Equal(HttpStatusCode.Unauthorized, repairReport.StatusCode);
     }
 
     [Fact]
@@ -119,6 +126,73 @@ public sealed class SyncEndpointTests : IClassFixture<SyncEndpointTests.TestServ
         Assert.Equal(results.Count, await db.ClientPrinters.CountAsync(p => p.ClientUserId == user.Id));
     }
 
+    [Fact]
+    public async Task RemoteRepairRunsThroughRealSyncAndReportEndpointsOnce()
+    {
+        var client = _factory.CreateClient();
+        var repairer = new RecordingRepairer();
+        var sync = new SyncOrchestrator(new SyncApiClient(client), new InstalledApplier(), new PreparedDrivers(), repairer, new RepairProgress());
+        var deviceId = Guid.NewGuid().ToString("N").ToUpperInvariant();
+        var initial = await sync.SyncOnceAsync("REPAIR-TEST", [], deviceId: deviceId);
+        using var scope = _factory.Services.CreateScope();
+        var factory = scope.ServiceProvider.GetRequiredService<IDbContextFactory<AppDbContext>>();
+        Guid userId;
+        Guid deviceRow;
+        await using (var db = await factory.CreateDbContextAsync())
+        {
+            var user = await db.ClientUsers.SingleAsync(u => u.Device.DeviceIdentifier == deviceId);
+            userId = user.Id;
+            deviceRow = user.DeviceId;
+            Assert.True(user.SupportsPrinterRepair);
+        }
+        var service = scope.ServiceProvider.GetRequiredService<ClientRepairService>();
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => service.RequestAsync(userId,
+            new ClaimsPrincipal(new ClaimsIdentity([new Claim(ClaimTypes.Name, "unprivileged")], "Dev"))));
+        var id = await service.RequestAsync(userId, new ClaimsPrincipal(new ClaimsIdentity([new Claim(ClaimTypes.Name, "hruser")], "Dev")));
+        var wrongDevice = await client.PostAsJsonAsync("/sync/repair-report", new PrinterRepairReportDto(id, "OTHER", PrinterRepairStatus.Completed));
+        Assert.Equal(HttpStatusCode.NotFound, wrongDevice.StatusCode);
+        var invalid = await client.PostAsJsonAsync("/sync/repair-report", new PrinterRepairReportDto(id, deviceId, PrinterRepairStatus.Pending));
+        Assert.Equal(HttpStatusCode.BadRequest, invalid.StatusCode);
+        var repaired = await sync.SyncOnceAsync("REPAIR-TEST", initial.ManagedPrinters, deviceId: deviceId);
+        Assert.Equal(2, repairer.Requests.Count);
+        Assert.All(repairer.Requests, request => Assert.Equal(id, request));
+        Assert.Equal(2, repaired.CompletedConnectionRepairs.Count);
+        await sync.SyncOnceAsync("REPAIR-TEST", repaired.ManagedPrinters, deviceId: deviceId);
+        Assert.Equal(2, repairer.Requests.Count);
+        await using var verify = await factory.CreateDbContextAsync();
+        Assert.Equal("Completed", (await verify.ClientUsers.SingleAsync(u => u.Id == userId)).RepairStatus);
+        var page = await client.GetStringAsync($"/clients/{deviceRow}");
+        Assert.Contains("Repair printer connections", page);
+        Assert.Contains("Printer connection repair", page);
+    }
+
+    private sealed class InstalledApplier : IPrinterApplier
+    {
+        public Task<IReadOnlyList<string>> EnumerateInstalledAsync(CancellationToken ct = default)
+            => Task.FromResult<IReadOnlyList<string>>([@"\\printsrv01\HR-MFP-01", @"\\printsrv01\Lobby-Mono"]);
+        public Task<ApplyOutcome> ApplyAsync(ReconcileResult plan, CancellationToken ct = default) => Task.FromResult(ApplyOutcome.Empty);
+    }
+    private sealed class PreparedDrivers : IDriverPreparer
+    {
+        public Task<DriverPreparationOutcome> PrepareAsync(IReadOnlyList<PrinterDto> printers, CancellationToken ct)
+            => Task.FromResult(new DriverPreparationOutcome([], printers.ToDictionary(p => p.UncPath, _ => new PreparedDriver("Driver", "Windows x64", 1, 2))));
+    }
+    private sealed class RecordingRepairer : IPrinterConnectionRepairer
+    {
+        public List<Guid?> Requests { get; } = [];
+        public Task CheckAndRepairAsync(PrinterDto printer, PreparedDriver driver, CancellationToken ct, bool connectionJustAdded = false, Guid? requestId = null)
+        {
+            Requests.Add(requestId);
+            return Task.CompletedTask;
+        }
+    }
+    private sealed class RepairProgress : IRemoteRepairStateStore
+    {
+        private readonly Dictionary<Guid, IReadOnlyCollection<string>> _completed = [];
+        public IReadOnlyCollection<string> Load(Guid id) => _completed.GetValueOrDefault(id) ?? [];
+        public void Save(Guid id, IReadOnlyCollection<string> complete) => _completed[id] = complete;
+    }
+
     public sealed class TestServerFactory : WebApplicationFactory<Program>
     {
         private readonly string _dbPath =
@@ -153,6 +227,7 @@ public sealed class SyncEndpointTests : IClassFixture<SyncEndpointTests.TestServ
                 {
                     ["ConnectionStrings:AppDb"] = $"Data Source={_dbPath}",
                     ["Auth:Dev:DefaultUser"] = "hruser",
+                    ["Auth:Admin:Users:0"] = "hruser",
                     ["Directory:Stub:Users:hruser:0"] = "S-1-5-21-DEMO-HR",
                     ["Directory:Stub:Users:enguser:0"] = "S-1-5-21-DEMO-ENG",
                 }));

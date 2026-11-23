@@ -112,7 +112,17 @@ if (-not (Test-Path $serverExe)) { throw "Server exe missing from publish folder
 $msiProj    = Join-Path $repoRoot "installer/OpenPrintDeploy.Server.Msi/OpenPrintDeploy.Server.Msi.wixproj"
 $msiProjDir = Split-Path -Parent $msiProj
 $msiBin     = Join-Path $msiProjDir "bin"
-if (Test-Path $msiBin) { Remove-Item -Recurse -Force $msiBin }
+$msiObj     = Join-Path $msiProjDir "obj"
+# WiX's incremental cache does not reliably notice changes to wildcard-harvested
+# payloads or HarvestDir. Clearing bin alone can copy the previous MSI from obj.
+foreach ($msiOutput in @($msiBin, $msiObj)) {
+    $resolvedMsiOutput = [IO.Path]::GetFullPath($msiOutput)
+    $resolvedRepoRoot = [IO.Path]::GetFullPath($repoRoot).TrimEnd('\', '/')
+    if (-not $resolvedMsiOutput.StartsWith($resolvedRepoRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "MSI output is outside the repository: $resolvedMsiOutput"
+    }
+    if (Test-Path -LiteralPath $resolvedMsiOutput) { Remove-Item -LiteralPath $resolvedMsiOutput -Recurse -Force }
+}
 
 Write-Host "Building MSI (WiX) from $resolvedOut..."
 & dotnet build $msiProj `

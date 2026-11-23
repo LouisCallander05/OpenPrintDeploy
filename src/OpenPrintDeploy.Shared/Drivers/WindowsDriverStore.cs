@@ -18,17 +18,22 @@ public static class WindowsDriverStore
         if (!OpenPrinter(queue, out var handle, IntPtr.Zero)) throw new Win32Exception();
         try
         {
-            GetPrinterDriver(handle, DriverEnvironment, 8, IntPtr.Zero, 0, out var needed);
-            if (needed == 0) throw new Win32Exception();
-            var buffer = Marshal.AllocHGlobal(checked((int)needed));
-            try
-            {
-                if (!GetPrinterDriver(handle, DriverEnvironment, 8, buffer, needed, out _)) throw new Win32Exception();
-                return Read(Marshal.PtrToStructure<DriverInfo8>(buffer));
-            }
-            finally { Marshal.FreeHGlobal(buffer); }
+            return ForPrinterHandle(handle);
         }
         finally { ClosePrinter(handle); }
+    }
+
+    internal static InstalledDriver ForPrinterHandle(IntPtr handle)
+    {
+        GetPrinterDriver(handle, DriverEnvironment, 8, IntPtr.Zero, 0, out var needed);
+        if (needed == 0) throw new Win32Exception();
+        var buffer = Marshal.AllocHGlobal(checked((int)needed));
+        try
+        {
+            if (!GetPrinterDriver(handle, DriverEnvironment, 8, buffer, needed, out _)) throw new Win32Exception();
+            return Read(Marshal.PtrToStructure<DriverInfo8>(buffer));
+        }
+        finally { Marshal.FreeHGlobal(buffer); }
     }
 
     public static InstalledDriver? Find(string name)

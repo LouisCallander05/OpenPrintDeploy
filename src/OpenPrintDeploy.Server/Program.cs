@@ -174,6 +174,7 @@ if (OperatingSystem.IsWindows() && !builder.Environment.IsDevelopment())
 builder.Services.AddSingleton<DriverTickets>();
 builder.Services.AddSingleton<DriverPackages>();
 builder.Services.AddScoped<ClientActivityTracker>();
+builder.Services.AddScoped<ClientRepairService>();
 builder.Services.Configure<ClientActivityOptions>(
     builder.Configuration.GetSection(ClientActivityOptions.SectionName));
 builder.Services.AddHostedService<ClientActivityRetentionService>();
@@ -332,6 +333,7 @@ app.MapPost("/sync", async (
     SyncHandler handler,
     DriverTickets tickets,
     ClientActivityTracker activity,
+    ClientRepairService repairs,
     HttpContext http,
     CancellationToken ct) =>
 {
@@ -350,6 +352,8 @@ app.MapPost("/sync", async (
     var syncId = request.SyncId ?? Guid.NewGuid();
     var response = (await handler.HandleAsync(http.User, request.MachineName, ct)) with { SyncId = syncId };
     await activity.RecordSyncStartedAsync(http.User.Identity?.Name ?? "(unknown)", request, response, ct);
+    if (response.Authoritative && request.SupportsPrinterRepair)
+        response = response with { RepairRequestId = await repairs.GetPendingAsync(http.User.Identity!.Name!, request.DeviceId, ct) };
     if (http.Request.IsHttps && OperatingSystem.IsWindows() && response.Authoritative)
         response = response with { Printers = response.Printers.Select(p => p with { DriverTicket = tickets.Issue(p.UncPath) }).ToList() };
     return Results.Ok(response);
@@ -360,6 +364,17 @@ app.MapPost("/sync", async (
 .DisableAntiforgery();
 
 app.MapDriverEndpoints();
+app.MapPost("/sync/repair-report", async (PrinterRepairReportDto report, ClientRepairService repairs, HttpContext http, CancellationToken ct) =>
+{
+    if (report.RequestId == Guid.Empty || string.IsNullOrWhiteSpace(report.DeviceId) || report.DeviceId.Length > 128
+        || report.Error?.Length > 1024 || !Enum.IsDefined(report.Status) || report.Status == PrinterRepairStatus.Pending)
+        return Results.BadRequest();
+    return await repairs.ReportAsync(http.User.Identity!.Name!, report, ct) ? Results.NoContent() : Results.NotFound();
+})
+.RequireAuthorization(syncPolicy)
+.RequireRateLimiting("sync-report")
+.WithMetadata(new RequestSizeLimitAttribute(8192))
+.DisableAntiforgery();
 app.MapPost("/sync/report", async (
     SyncReportDto report,
     ClientActivityTracker activity,

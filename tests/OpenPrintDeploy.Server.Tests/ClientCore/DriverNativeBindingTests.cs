@@ -11,6 +11,16 @@ public sealed class DriverNativeBindingTests
     [InlineData(typeof(WindowsDriverStore), "UploadPrinterDriverPackage")]
     [InlineData(typeof(WindowsDriverStore), "InstallPrinterDriverFromPackage")]
     [InlineData(typeof(WindowsPrinterConnection), "AddPrinterConnection2")]
+    [InlineData(typeof(WindowsPrinterRepairOperations), "OpenPrinter2")]
+    [InlineData(typeof(WindowsPrinterRepairOperations), "ClosePrinter")]
+    [InlineData(typeof(WindowsPrinterRepairOperations), "GetPrinter")]
+    [InlineData(typeof(WindowsPrinterRepairOperations), "DeviceCapabilities")]
+    [InlineData(typeof(WindowsPrinterRepairOperations), "EnumJobs")]
+    [InlineData(typeof(WindowsPrinterRepairOperations), "DeletePrinterConnection")]
+    [InlineData(typeof(WindowsPrinterRepairOperations), "DocumentProperties")]
+    [InlineData(typeof(WindowsPrinterRepairOperations), "SetPrinter")]
+    [InlineData(typeof(WindowsPrinterRepairOperations), "GetDefaultPrinter")]
+    [InlineData(typeof(WindowsPrinterRepairOperations), "SetDefaultPrinter")]
     public void EntryPointExistsInDeclaredWindowsLibrary(Type declaringType, string methodName)
     {
         if (!OperatingSystem.IsWindows()) return;

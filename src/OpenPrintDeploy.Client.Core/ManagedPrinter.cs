@@ -26,4 +26,9 @@ public enum PrinterOrigin
 /// </summary>
 /// <param name="Unc">The printer connection UNC, e.g. <c>\\printsrv\Library-BW</c>.</param>
 /// <param name="Origin">How OPD came to manage it.</param>
-public sealed record ManagedPrinter(string Unc, PrinterOrigin Origin);
+public sealed record ManagedPrinter(string Unc, PrinterOrigin Origin)
+{
+    // Missing in older state files: zero means the shared-connection migration
+    // still needs to inspect this queue. This is per user and per connection.
+    public int ConnectionRevision { get; init; }
+}

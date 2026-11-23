@@ -6,6 +6,8 @@
 @using Microsoft.Extensions.Options
 @using OpenPrintDeploy.Server.Sync
 @inject ClientActivityAdminService ClientService
+@inject ClientRepairService RepairService
+@inject Microsoft.AspNetCore.Components.Authorization.AuthenticationStateProvider AuthState
 @inject IOptions<ClientActivityOptions> ActivityOptions
 
 <PageTitle>@(_device?.MachineName ?? "Client") · Open Print Deploy</PageTitle>
@@ -51,6 +53,11 @@ else
         </div></div></div>
     </div>
 
+    @if (_repairError is not null)
+    {
+        <div class="alert alert-danger">@_repairError</div>
+    }
+
     @if (_device.Users.Count == 0)
     {
         <p class="text-muted">No user syncs have been recorded for this device.</p>
@@ -84,6 +91,35 @@ else
                     {
                         <div class="alert alert-danger py-2">@user.LastError</div>
                     }
+
+                    <div class="border rounded p-3 mb-4">
+                        <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
+                            <div>
+                                <strong>Printer connection repair</strong>
+                                @if (user.Repair is { } repair)
+                                {
+                                    <span class="badge ms-2 @(repair.Status == "Failed" ? "text-bg-danger" : repair.Status == "Completed" ? "text-bg-success" : "text-bg-primary")">@repair.Status</span>
+                                }
+                            </div>
+                            <button class="btn btn-sm btn-outline-primary"
+                                    disabled="@(_requestingRepair is not null || !user.CanRepairPrinters || user.Repair?.Status is "Pending" or "Running")"
+                                    @onclick="() => RequestRepairAsync(user.Id)">
+                                @(_requestingRepair == user.Id ? "Requesting…" : user.Repair?.Status == "Failed" ? "Retry failed repairs" : "Repair printer connections")
+                            </button>
+                        </div>
+                        <p class="small text-muted mb-0 mt-2">Reconnects this user's OPD-managed printers on this computer. The default printer and standard preferences are preserved; vendor-specific preferences may reset.</p>
+                        @if (!user.CanRepairPrinters)
+                        {
+                            <div class="small mt-2">Update this user's client and let it sync to enable remote repair.</div>
+                        }
+                        @if (user.Repair is { } status)
+                        {
+                            @if (status.Status == "Pending") { <div class="small mt-2">Waiting for this user's next sync. Offline clients will pick up the request when they reconnect.</div> }
+                            @if (status.Status == "Running") { <div class="small mt-2">The client is repairing printer connections.</div> }
+                            @if (status.RequestedAt is { } requested) { <div class="small text-muted mt-2">Requested @Ago(requested) by @status.RequestedBy</div> }
+                            @if (status.Error is not null) { <div class="small text-danger mt-2">@status.Error</div> }
+                        }
+                    </div>
 
                     <h2 class="h5">Managed printers</h2>
                     @if (user.Printers.Count == 0)
@@ -184,6 +220,24 @@ else
     private readonly CancellationTokenSource _dispose = new();
     private ClientDeviceDetails? _device;
     private bool _loading;
+    private Guid? _requestingRepair;
+    private string? _repairError;
+
+    private async Task RequestRepairAsync(Guid userId)
+    {
+        if (_requestingRepair is not null) return;
+        _requestingRepair = userId;
+        _repairError = null;
+        try
+        {
+            await RepairService.RequestAsync(userId, (await AuthState.GetAuthenticationStateAsync()).User, _dispose.Token);
+            await LoadAsync();
+        }
+        catch (AdminValidationException ex) { _repairError = ex.Message; }
+        catch (UnauthorizedAccessException ex) { _repairError = ex.Message; }
+        catch (OperationCanceledException) when (_dispose.IsCancellationRequested) { }
+        finally { _requestingRepair = null; }
+    }
 
     [Parameter] public Guid Id { get; set; }
 

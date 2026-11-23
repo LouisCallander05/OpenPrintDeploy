@@ -16,6 +16,14 @@ public sealed class ClientUserEntity
     public int SyncedPrinterCount { get; set; }
     public int FailedPrinterCount { get; set; }
     public string? LastError { get; set; }
+    public bool SupportsPrinterRepair { get; set; }
+    public Guid? RepairRequestId { get; set; }
+    public DateTimeOffset? RepairRequestedAt { get; set; }
+    public string? RepairRequestedBy { get; set; }
+    public DateTimeOffset? RepairStartedAt { get; set; }
+    public DateTimeOffset? RepairCompletedAt { get; set; }
+    public string? RepairStatus { get; set; }
+    public string? RepairError { get; set; }
 
     public required ClientDeviceEntity Device { get; set; }
     public ICollection<ClientPrinterEntity> Printers { get; set; } = new List<ClientPrinterEntity>();

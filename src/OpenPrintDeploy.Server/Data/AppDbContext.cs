@@ -64,6 +64,9 @@ public sealed class AppDbContext : DbContext
         clientUser.Property(u => u.NormalizedUsername).HasMaxLength(256).IsRequired();
         clientUser.Property(u => u.LastSyncStatus).HasMaxLength(32).IsRequired();
         clientUser.Property(u => u.LastError).HasMaxLength(1024);
+        clientUser.Property(u => u.RepairRequestedBy).HasMaxLength(256);
+        clientUser.Property(u => u.RepairStatus).HasMaxLength(32);
+        clientUser.Property(u => u.RepairError).HasMaxLength(1024);
         clientUser.HasIndex(u => new { u.DeviceId, u.NormalizedUsername }).IsUnique();
         clientUser.HasOne(u => u.Device)
             .WithMany(d => d.Users)

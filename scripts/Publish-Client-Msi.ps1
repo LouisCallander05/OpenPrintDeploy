@@ -61,7 +61,17 @@ if ($LASTEXITCODE -ne 0) { throw "Publish-Tray.ps1 failed (exit $LASTEXITCODE)" 
 $msiProj    = Join-Path $repoRoot "installer/OpenPrintDeploy.Client.Msi/OpenPrintDeploy.Client.Msi.wixproj"
 $msiProjDir = Split-Path -Parent $msiProj
 $msiBin     = Join-Path $msiProjDir "bin"
-if (Test-Path $msiBin) { Remove-Item -Recurse -Force $msiBin }
+$msiObj     = Join-Path $msiProjDir "obj"
+# Wildcard-harvested payload changes can leave a reusable MSI in WiX's obj
+# directory. Always package the newly published files, including same-version pilots.
+foreach ($msiOutput in @($msiBin, $msiObj)) {
+    $resolvedMsiOutput = [IO.Path]::GetFullPath($msiOutput)
+    $resolvedRepoRoot = [IO.Path]::GetFullPath($repoRoot).TrimEnd('\', '/')
+    if (-not $resolvedMsiOutput.StartsWith($resolvedRepoRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "MSI output is outside the repository: $resolvedMsiOutput"
+    }
+    if (Test-Path -LiteralPath $resolvedMsiOutput) { Remove-Item -LiteralPath $resolvedMsiOutput -Recurse -Force }
+}
 
 Write-Host "Building client MSI (WiX) from $trayDir..."
 & dotnet build $msiProj `

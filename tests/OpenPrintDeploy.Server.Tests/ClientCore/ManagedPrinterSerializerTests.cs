@@ -31,6 +31,16 @@ public sealed class ManagedPrinterSerializerTests
     }
 
     [Fact]
+    public void OldObjectStateDefaultsToPendingConnectionMigration()
+    {
+        var parsed = ManagedPrinterSerializer.Parse("""[{"Unc":"\\\\srv\\queue","Origin":"Adopted"}]""");
+        Assert.Equal(0, Assert.Single(parsed).ConnectionRevision);
+        Assert.Equal(PrinterOrigin.Adopted, parsed[0].Origin);
+        var migrated = parsed[0] with { ConnectionRevision = 1 };
+        Assert.Equal(1, Assert.Single(ManagedPrinterSerializer.Parse(ManagedPrinterSerializer.Serialize([migrated]))).ConnectionRevision);
+    }
+
+    [Fact]
     public void Parse_LegacyBareStringArray_MigratesAsCreated()
     {
         // Pre-provenance format: a bare array of UNC strings.

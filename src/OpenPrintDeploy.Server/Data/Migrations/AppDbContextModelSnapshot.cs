@@ -192,6 +192,33 @@ namespace OpenPrintDeploy.Server.Data.Migrations
                         .HasMaxLength(256)
                         .HasColumnType("TEXT");
 
+                    b.Property<DateTimeOffset?>("RepairCompletedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("RepairError")
+                        .HasMaxLength(1024)
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid?>("RepairRequestId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset?>("RepairRequestedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("RepairRequestedBy")
+                        .HasMaxLength(256)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset?>("RepairStartedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("RepairStatus")
+                        .HasMaxLength(32)
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("SupportsPrinterRepair")
+                        .HasColumnType("INTEGER");
+
                     b.Property<int>("SyncedPrinterCount")
                         .HasColumnType("INTEGER");
 

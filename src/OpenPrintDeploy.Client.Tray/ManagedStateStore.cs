@@ -29,6 +29,13 @@ public sealed class ManagedStateStore
             ? ManagedPrinterSerializer.Parse(File.ReadAllText(_path))
             : [];
 
+    public IDisposable AcquireSync()
+        => new FileStream(_path + ".lock", FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+
     public void Save(IReadOnlyList<ManagedPrinter> managed)
-        => File.WriteAllText(_path, ManagedPrinterSerializer.Serialize(managed));
+    {
+        var temporary = _path + ".tmp";
+        File.WriteAllText(temporary, ManagedPrinterSerializer.Serialize(managed));
+        File.Move(temporary, _path, overwrite: true);
+    }
 }
