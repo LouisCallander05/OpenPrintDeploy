@@ -40,8 +40,11 @@ public static class WindowsDriverStore
     }
 
     public static InstalledDriver? Find(string name)
+        => Find(name, null);
+
+    internal static InstalledDriver? Find(string name, string? server)
     {
-        EnumPrinterDrivers(null, DriverEnvironment, 8, IntPtr.Zero, 0, out var needed, out _);
+        EnumPrinterDrivers(server, DriverEnvironment, 8, IntPtr.Zero, 0, out var needed, out _);
         if (needed == 0)
         {
             var error = Marshal.GetLastWin32Error();
@@ -51,7 +54,7 @@ public static class WindowsDriverStore
         var buffer = Marshal.AllocHGlobal(checked((int)needed));
         try
         {
-            if (!EnumPrinterDrivers(null, DriverEnvironment, 8, buffer, needed, out _, out var count))
+            if (!EnumPrinterDrivers(server, DriverEnvironment, 8, buffer, needed, out _, out var count))
                 throw new Win32Exception();
             for (var i = 0; i < count; i++)
             {

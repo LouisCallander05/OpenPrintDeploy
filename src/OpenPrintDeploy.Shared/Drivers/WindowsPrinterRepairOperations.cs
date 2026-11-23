@@ -13,14 +13,11 @@ public sealed class WindowsPrinterRepairOperations : IPrinterRepairOperations
     public void VerifyDriver(string unc, PreparedDriver driver)
     {
         var local = WindowsDriverStore.Find(driver.Name);
-        var queue = WindowsDriverStore.ForLocalQueue(unc);
-        if (!Matches(local, driver) || !Matches(queue, driver))
-            throw new InvalidOperationException("The queue and prepared local driver must match before connection repair.");
+        // The current client connection can legitimately use Windows' Enhanced
+        // Point and Print driver for a Type 4 share. Verify installed preparation
+        // here; verify the actual server queue separately before disconnecting.
+        PrinterDriverIdentity.Verify(local, driver, "installed local");
     }
-
-    private static bool Matches(InstalledDriver? actual, PreparedDriver expected)
-        => actual is not null && actual.Name.Equals(expected.Name, StringComparison.OrdinalIgnoreCase)
-            && actual.Environment == expected.Environment && actual.Version == expected.Version && actual.Date == expected.Date;
 
     public bool SupportsDuplex(string unc) => WithPrinter(unc, false, handle =>
     {
@@ -37,9 +34,10 @@ public sealed class WindowsPrinterRepairOperations : IPrinterRepairOperations
     {
         // Bypass the local spooler cache. An unavailable server or changed
         // package must defer repair before any connection is disconnected.
-        var serverDriver = WindowsDriverStore.ForPrinterHandle(handle);
-        if (!Matches(serverDriver, driver))
-            throw new InvalidOperationException("The live server driver changed; retry after driver preparation.");
+        // Even an uncached GetPrinterDriver on this handle can return the
+        // client rendering driver. Server enumeration identifies the real share.
+        var serverDriver = WindowsServerQueueDriver.Get(unc);
+        PrinterDriverIdentity.Verify(serverDriver, driver, "live server queue");
         // This is deliberately before Capture/Disconnect. Vendor identity
         // alone is insufficient when Point and Print needs a newer core INF.
         WindowsDriverStore.VerifyConnectionCorePackages(unc, serverDriver);

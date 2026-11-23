@@ -12,6 +12,7 @@ public sealed class DriverNativeBindingTests
     [InlineData(typeof(WindowsDriverStore), "InstallPrinterDriverFromPackage")]
     [InlineData(typeof(WindowsDriverStore), "GetCorePrinterDrivers")]
     [InlineData(typeof(WindowsDriverStore), "CorePrinterDriverInstalled")]
+    [InlineData(typeof(WindowsServerQueueDriver), "EnumPrinters")]
     [InlineData(typeof(WindowsPrinterConnection), "AddPrinterConnection2")]
     [InlineData(typeof(WindowsPrinterRepairOperations), "OpenPrinter2")]
     [InlineData(typeof(WindowsPrinterRepairOperations), "ClosePrinter")]
@@ -59,5 +60,15 @@ public sealed class DriverNativeBindingTests
         Assert.Equal(new IntPtr(24), Marshal.OffsetOf(info, "Version"));
         Assert.Equal(new IntPtr(32), Marshal.OffsetOf(info, "Package"));
         Assert.Equal(552, Marshal.SizeOf(info));
+    }
+
+    [Fact]
+    public void ServerPrinterInfoMatchesWindowsAbi()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        var info = typeof(WindowsServerQueueDriver).GetNestedType("PrinterInfo2", BindingFlags.NonPublic)!;
+        Assert.Equal(new IntPtr(2 * IntPtr.Size), Marshal.OffsetOf(info, "Share"));
+        Assert.Equal(new IntPtr(4 * IntPtr.Size), Marshal.OffsetOf(info, "Driver"));
+        Assert.Equal(13 * IntPtr.Size + 32, Marshal.SizeOf(info));
     }
 }

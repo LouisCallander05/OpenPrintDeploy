@@ -13,7 +13,8 @@ public static class WindowsPrinterConnection
         // Even an older service can report the vendor driver as ready while
         // leaving a newer server core package unstaged. Never attempt that
         // privileged import through the normal user's connection operation.
-        var serverDriver = WindowsDriverStore.ForLocalQueue(unc);
+        var serverDriver = WindowsServerQueueDriver.Get(unc);
+        if (prepared is not null) PrinterDriverIdentity.Verify(serverDriver, prepared, "live server queue");
         WindowsDriverStore.VerifyConnectionCorePackages(unc, serverDriver);
         AddCore(prepared, WindowsDriverStore.Find, (flags, name) =>
         {
